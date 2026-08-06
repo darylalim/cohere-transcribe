@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 import shutil
 import subprocess
 import tempfile
@@ -46,11 +45,16 @@ def _decode_with_ffmpeg(data: bytes) -> np.ndarray:
         source.flush()
         # fmt: off
         command = [
-            "ffmpeg", "-loglevel", "error", "-i", source.name,
+            "ffmpeg", "-nostdin", "-loglevel", "error", "-i", source.name,
             "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", "pipe:1",
         ]
         # fmt: on
-        result = subprocess.run(command, capture_output=True, check=False)
+        # -nostdin, and stdin closed: ffmpeg reads the terminal for interactive
+        # keys otherwise, and `streamlit run` is normally started from one. A
+        # stray keypress could abort a decode into a silently truncated result.
+        result = subprocess.run(
+            command, capture_output=True, check=False, stdin=subprocess.DEVNULL
+        )
 
     if result.returncode != 0:
         detail = result.stderr.decode("utf-8", "replace").strip().splitlines()
@@ -73,19 +77,26 @@ def decode_to_mono16k(file) -> tuple[np.ndarray, float]:
     """
     from mlx_audio.audio_io import read as audio_read
 
-    data = file.getvalue()
+    file.seek(0)
     try:
+        # Passed straight through rather than copied into a fresh BytesIO:
+        # UploadedFile already is one, and uploads run to 1000 MB here.
         audio, _ = audio_read(
-            io.BytesIO(data), dtype="float32", sample_rate=SAMPLE_RATE, nchannels=1
+            file, dtype="float32", sample_rate=SAMPLE_RATE, nchannels=1
         )
         waveform = np.asarray(audio, dtype=np.float32).reshape(-1)
-    except ValueError:
+    except Exception:  # noqa: BLE001 - anything it raises, ffmpeg gets a turn
+        # Deliberately broad. mlx-audio surfaces at least three unrelated types
+        # for "cannot decode": ValueError from its magic-byte sniffer,
+        # miniaudio.DecodeError from the wav/mp3/flac path, and RuntimeError
+        # from its own ffmpeg wrapper. Narrowing this to ValueError meant the
+        # fallback never ran for the latter two.
         waveform = np.empty(0, dtype=np.float32)
 
     # An empty result is a failure, not silence: mlx-audio returns one instead
     # of raising when its piped ffmpeg call cannot seek. Retry before giving up.
     if waveform.size == 0:
-        waveform = _decode_with_ffmpeg(data)
+        waveform = _decode_with_ffmpeg(file.getvalue())
 
     if waveform.size == 0:
         raise ValueError("The audio file decoded to zero samples.")
@@ -112,7 +123,19 @@ def _timestamp(seconds: float, separator: str) -> str:
 
 
 def _cues(segments: Iterable[dict]) -> list[dict]:
-    return [seg for seg in segments or [] if (seg.get("text") or "").strip()]
+    """Segments worth writing as a subtitle cue.
+
+    Checks every key the writers go on to index, not just ``text`` — a segment
+    missing ``start`` would otherwise raise KeyError while rendering a result
+    that has already succeeded, taking the transcript off screen with it.
+    """
+    return [
+        seg
+        for seg in segments or []
+        if (seg.get("text") or "").strip()
+        and seg.get("start") is not None
+        and seg.get("end") is not None
+    ]
 
 
 def to_srt(segments: Sequence[dict]) -> str:

@@ -101,8 +101,11 @@ else:
 source_key = getattr(audio_file, "file_id", None) or getattr(audio_file, "name", None)
 
 # Drop a stale transcript as soon as the source changes, so the text on screen
-# always belongs to the audio on screen.
-if result and result.source_key != str(source_key):
+# always belongs to the audio on screen. Only when there *is* a new source:
+# switching to Record, or clearing the uploader, empties the widget without
+# invalidating what was already transcribed, and throwing away a long
+# transcription there is unrecoverable.
+if result and source_key is not None and result.source_key != str(source_key):
     result = None
     st.session_state.result = None
 
@@ -122,6 +125,7 @@ result_slot = st.container()
 if run and audio_file is not None:
     with status_slot, st.status("Transcribing", expanded=True) as status:
         try:
+            wall_clock = time.perf_counter()
             st.write("Decoding audio")
             waveform, duration_s = decode_to_mono16k(audio_file)
 
@@ -163,8 +167,14 @@ if run and audio_file is not None:
                 elapsed_s=elapsed,
             )
             st.session_state.result = result
+            # Total wall clock, not `elapsed`: on a first run the decode and the
+            # ~4 GB download dominate, and collapsing to "Transcribed in 2.1s"
+            # after a several minute wait reads as a stopwatch that lied. The
+            # Elapsed metric below stays generation-only, since RTFx needs that.
             status.update(
-                label=f"Transcribed in {elapsed:.1f}s", state="complete", expanded=False
+                label=f"Done in {time.perf_counter() - wall_clock:.1f}s",
+                state="complete",
+                expanded=False,
             )
 
 # --- Result ---------------------------------------------------------------
@@ -194,6 +204,12 @@ if result:
 
         with st.container(border=True):
             st.markdown(result.text or "_No speech detected._")
+            st.caption(f"{LANGUAGES[result.language]} · {result.source_name}")
+
+        # Built once here rather than inline in the buttons, which re-serialised
+        # the whole segment list on every rerun even while disabled.
+        srt = to_srt(result.segments) if result.segments else ""
+        vtt = to_vtt(result.segments) if result.segments else ""
 
         with st.container(horizontal=True):
             st.download_button(
@@ -204,17 +220,17 @@ if result:
             )
             st.download_button(
                 "SRT",
-                to_srt(result.segments),
+                srt,
                 file_name=f"{result.stem}.srt",
                 icon=":material/subtitles:",
-                disabled=not result.segments,
+                disabled=not srt,
             )
             st.download_button(
                 "VTT",
-                to_vtt(result.segments),
+                vtt,
                 file_name=f"{result.stem}.vtt",
                 icon=":material/subtitles:",
-                disabled=not result.segments,
+                disabled=not vtt,
             )
 
         if len(result.segments) > 1:

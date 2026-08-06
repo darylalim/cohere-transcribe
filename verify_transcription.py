@@ -21,6 +21,7 @@ from __future__ import annotations
 import io
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -157,6 +158,7 @@ def check_decoding(tmp: pathlib.Path) -> list[Failure]:
     """
     source = tmp / "formats.aiff"
     synthesize(SHORT_TEXT, source)
+    _, reference_s = decode_to_mono16k(_Upload(source))
     failures = []
 
     for ext in UPLOAD_TYPES:
@@ -181,8 +183,15 @@ def check_decoding(tmp: pathlib.Path) -> list[Failure]:
 
         try:
             _, duration = decode_to_mono16k(_Upload(target))
-            if duration <= 0:
-                raise ValueError("decoded to zero samples")
+            # Not just "> 0". The mode next door to an empty decode is a short
+            # one: on an unseekable container ffmpeg can emit its 32 KB buffer
+            # and stop, and 0.2s of a 7s file would otherwise print as a pass.
+            drift = abs(duration - reference_s) / reference_s
+            if drift > 0.05:
+                raise ValueError(
+                    f"decoded {duration:.2f}s against a {reference_s:.2f}s "
+                    f"source ({drift:.0%} off)"
+                )
             print(f"  {ext:5} {duration:5.1f}s")
         except Exception as exc:  # noqa: BLE001 - reported, not raised
             failures.append(Failure(f"decode {ext}: {type(exc).__name__}: {exc}"))
@@ -191,8 +200,11 @@ def check_decoding(tmp: pathlib.Path) -> list[Failure]:
     return failures
 
 
-def main() -> int:
-    tmp = pathlib.Path(tempfile.mkdtemp(prefix="cohere-verify-"))
+def run(tmp: pathlib.Path) -> int:
+    for binary in ("say", "ffmpeg"):
+        if shutil.which(binary) is None:
+            print(f"FAIL  `{binary}` is not on PATH; this script needs it to run")
+            return 1
 
     print("checking every advertised upload format decodes")
     failures = check_decoding(tmp)
@@ -244,6 +256,13 @@ def main() -> int:
         return 1
     print("PASS  transcription verified against real weights")
     return 0
+
+
+def main() -> int:
+    # TemporaryDirectory so the transcoded audio does not accumulate in the
+    # system temp dir on every run, including the success path.
+    with tempfile.TemporaryDirectory(prefix="cohere-verify-") as tmp:
+        return run(pathlib.Path(tmp))
 
 
 if __name__ == "__main__":
