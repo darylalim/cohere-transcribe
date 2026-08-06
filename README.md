@@ -12,8 +12,8 @@ uv venv --python 3.12
 uv pip install -e .
 ```
 
-`ffmpeg` is needed for m4a, aac, ogg, opus and webm input (`brew install ffmpeg`).
-Everything else decodes through miniaudio.
+Only wav, mp3 and flac decode through miniaudio. Everything else — aiff, m4a,
+aac, ogg, opus, webm — needs `ffmpeg` (`brew install ffmpeg`).
 
 The weights are gated. Accept the terms at
 [CohereLabs/cohere-transcribe-03-2026](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026),

@@ -3,14 +3,51 @@
 from __future__ import annotations
 
 import io
+import shutil
+import subprocess
 from collections.abc import Iterable, Sequence
 
 import numpy as np
 
 SAMPLE_RATE = 16_000
 
-# miniaudio handles the first four; mlx-audio shells out to ffmpeg for the rest.
+# miniaudio decodes the first three. Everything else reaches ffmpeg, either
+# through mlx-audio itself or through the fallback below.
 UPLOAD_TYPES = ["wav", "mp3", "flac", "aiff", "m4a", "aac", "ogg", "opus", "webm"]
+
+
+def _decode_with_ffmpeg(data: bytes) -> np.ndarray:
+    """Decode a container mlx-audio cannot identify, to mono 16 kHz float32.
+
+    mlx-audio picks a decoder from magic bytes and has no branch for AIFF
+    (``FORM``/``AIFC``) or raw ADTS AAC (``0xFFF1``), so both raise before any
+    decoder runs even though ffmpeg reads them fine.
+
+    Asks ffmpeg for raw ``s16le`` rather than WAV: a pipe is not seekable, so
+    ffmpeg cannot backfill the RIFF size field and emits a ``0xFFFFFFFF``
+    placeholder instead. Raw PCM has no header to misparse.
+    """
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError(
+            "This audio format needs ffmpeg, which is not installed. "
+            "Install it with `brew install ffmpeg`, or convert the file to "
+            "WAV, MP3 or FLAC first."
+        )
+
+    # fmt: off
+    command = [
+        "ffmpeg", "-loglevel", "error", "-i", "pipe:0",
+        "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", "pipe:1",
+    ]
+    # fmt: on
+    result = subprocess.run(command, input=data, capture_output=True, check=False)
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", "replace").strip().splitlines()
+        raise ValueError(
+            f"ffmpeg could not decode this file: {detail[-1] if detail else 'unknown error'}"
+        )
+
+    return np.frombuffer(result.stdout, dtype="<i2").astype(np.float32) / 32768.0
 
 
 def decode_to_mono16k(file) -> tuple[np.ndarray, float]:
@@ -18,16 +55,22 @@ def decode_to_mono16k(file) -> tuple[np.ndarray, float]:
 
     Streamlit's ``UploadedFile`` is a ``BytesIO`` subclass and mlx-audio's reader
     accepts one directly, so the whole decode / downmix / resample happens in one
-    call with no temporary file on disk.
+    call with no temporary file on disk. Formats its sniffer does not recognise
+    fall back to ffmpeg.
 
     Returns the waveform and its duration in seconds.
     """
     from mlx_audio.audio_io import read as audio_read
 
-    buffer = io.BytesIO(file.getvalue())
-    audio, _ = audio_read(buffer, dtype="float32", sample_rate=SAMPLE_RATE, nchannels=1)
+    data = file.getvalue()
+    try:
+        audio, _ = audio_read(
+            io.BytesIO(data), dtype="float32", sample_rate=SAMPLE_RATE, nchannels=1
+        )
+        waveform = np.asarray(audio, dtype=np.float32).reshape(-1)
+    except ValueError:
+        waveform = _decode_with_ffmpeg(data)
 
-    waveform = np.asarray(audio, dtype=np.float32).reshape(-1)
     if waveform.size == 0:
         raise ValueError("The audio file decoded to zero samples.")
 
