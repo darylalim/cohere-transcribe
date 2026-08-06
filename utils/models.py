@@ -66,26 +66,32 @@ class ModelWeightsError(RuntimeError):
 
 
 def _patch_vad_dtype() -> None:
-    """Work around a VAD crash in mlx-audio 0.4.7.
+    """Work around the VAD path in mlx-audio 0.4.7, which assumes numpy.
 
-    ``cohere_asr._segment_with_vad`` hands an ``mx.array`` to a Silero backend
-    whose ``detect_speech`` calls ``waveform.astype(np.float32)``. MLX arrays only
-    accept MLX dtypes, so every ``vad=True`` call raises TypeError. Coerce to
-    numpy on the way in. Safe to delete once fixed upstream.
+    ``Model._segment_with_vad`` is written against numpy throughout — it reaches
+    ``waveform.astype(np.float32)`` inside the Silero backend and
+    ``waveform[a:b].copy()`` when it slices the detected runs out, and its own
+    return annotation is ``List[np.ndarray]``. But ``generate`` hands it the
+    ``mx.array`` that ``_to_mono`` produced, and MLX arrays have neither method,
+    so every ``vad=True`` call raises.
+
+    Coerce once at that boundary rather than patching each call inside, so a
+    third numpy assumption in the same function cannot resurface. Safe to delete
+    once fixed upstream.
     """
-    from mlx_audio.stt.models.cohere_asr import vad
+    from mlx_audio.stt.models.cohere_asr.cohere_asr import Model
 
-    if getattr(vad.SileroMlxBackend, "_accepts_mx_array", False):
+    if getattr(Model._segment_with_vad, "_coerces_numpy", False):
         return
 
-    original = vad.SileroMlxBackend.detect_speech
+    original = Model._segment_with_vad
 
     @functools.wraps(original)
-    def detect_speech(self, waveform):
-        return original(self, np.asarray(waveform, dtype=np.float32))
+    def _segment_with_vad(self, waveform, *args, **kwargs):
+        return original(self, np.asarray(waveform, dtype=np.float32), *args, **kwargs)
 
-    vad.SileroMlxBackend.detect_speech = detect_speech  # ty: ignore[invalid-assignment]
-    vad.SileroMlxBackend._accepts_mx_array = True  # ty: ignore[unresolved-attribute]
+    _segment_with_vad._coerces_numpy = True  # ty: ignore[unresolved-attribute]
+    Model._segment_with_vad = _segment_with_vad  # ty: ignore[invalid-assignment]
 
 
 # max_entries=1 keeps a single multi-gigabyte model resident, so pointing the app
