@@ -38,9 +38,10 @@ The first transcription downloads ~4 GB of weights into `~/.cache/huggingface`.
 ```
 
 Synthesizes speech with macOS `say`, so the reference text is exact, then checks
-the transcript against it. Covers what `AppTest` cannot reach: long-form
-splitting past the 35-second window, SRT/VTT export from real segments, and the
-VAD path. Current results on an M-series Mac:
+the transcript against it. Covers what `AppTest` cannot reach: every advertised
+upload format decoding to real samples, long-form splitting past the 35-second
+window, SRT/VTT export from real segments, and the VAD path. Current results on
+an M-series Mac:
 
 | Check | WER | Segments | RTFx |
 | --- | --- | --- | --- |
@@ -100,6 +101,12 @@ boundary. Delete it once mlx-audio ships a fix.
 **mlx-audio cannot identify AIFF or raw AAC.** Its format sniffer matches magic
 bytes and has no branch for `FORM`/`AIFC` or ADTS `0xFFF1`, so both raise before
 any decoder runs. `utils/audio._decode_with_ffmpeg` retries them through ffmpeg.
+
+**mlx-audio pipes MP4 to ffmpeg on stdin**, which cannot seek. Unless the file
+was written with `+faststart` its `moov` index sits at the end — the normal
+layout — so ffmpeg reads nothing, exits 0, and mlx-audio returns an *empty
+array* rather than raising. The fallback writes to a real file for this reason,
+and `decode_to_mono16k` treats an empty result as a failure to retry.
 
 ## Layout
 

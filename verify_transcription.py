@@ -29,7 +29,7 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-from utils.audio import decode_to_mono16k, to_srt, to_vtt
+from utils.audio import UPLOAD_TYPES, decode_to_mono16k, to_srt, to_vtt
 from utils.models import DEFAULT_REPO, load_asr
 
 SHORT_TEXT = (
@@ -146,14 +146,61 @@ def check(label: str, reference: str, model, tmp: pathlib.Path, **kwargs) -> dic
     return {"wer": wer, "segments": segments, "duration_s": duration_s}
 
 
+def check_decoding(tmp: pathlib.Path) -> list[Failure]:
+    """Every format the uploader advertises must decode to real samples.
+
+    Needs no model, so it runs first. Includes an MP4 written *without*
+    ``+faststart``: that puts the ``moov`` index at the end of the file, which
+    is the normal layout, and it decoded to an empty array until the ffmpeg
+    fallback stopped piping. Empty is the failure mode to watch -- it does not
+    raise on its own.
+    """
+    source = tmp / "formats.aiff"
+    synthesize(SHORT_TEXT, source)
+    failures = []
+
+    for ext in UPLOAD_TYPES:
+        target = tmp / f"formats.{ext}"
+        if ext != "aiff":
+            # No -movflags for m4a on purpose: ffmpeg's default already leaves
+            # the moov index at the end, which is the layout that broke.
+            result = subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error", "-i", str(source), str(target)],
+                capture_output=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                # Never skip silently -- a missing row reads as a passing row.
+                failures.append(
+                    Failure(f"encode {ext}: ffmpeg could not produce the test file")
+                )
+                print(f"  {ext:5} SKIP (ffmpeg cannot encode it here)")
+                continue
+        else:
+            target = source
+
+        try:
+            _, duration = decode_to_mono16k(_Upload(target))
+            if duration <= 0:
+                raise ValueError("decoded to zero samples")
+            print(f"  {ext:5} {duration:5.1f}s")
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            failures.append(Failure(f"decode {ext}: {type(exc).__name__}: {exc}"))
+            print(f"  {ext:5} FAIL {exc}")
+
+    return failures
+
+
 def main() -> int:
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="cohere-verify-"))
-    print(f"loading {DEFAULT_REPO} (first run downloads ~4 GB)")
+
+    print("checking every advertised upload format decodes")
+    failures = check_decoding(tmp)
+
+    print(f"\nloading {DEFAULT_REPO} (first run downloads ~4 GB)")
     started = time.perf_counter()
     model = load_asr(DEFAULT_REPO)
     print(f"loaded in {time.perf_counter() - started:.1f}s")
-
-    failures = []
 
     try:
         check("short", SHORT_TEXT, model, tmp)

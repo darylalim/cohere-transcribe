@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Iterable, Sequence
 
 import numpy as np
@@ -17,15 +18,21 @@ UPLOAD_TYPES = ["wav", "mp3", "flac", "aiff", "m4a", "aac", "ogg", "opus", "webm
 
 
 def _decode_with_ffmpeg(data: bytes) -> np.ndarray:
-    """Decode a container mlx-audio cannot identify, to mono 16 kHz float32.
+    """Decode audio mlx-audio could not handle, to mono 16 kHz float32.
 
-    mlx-audio picks a decoder from magic bytes and has no branch for AIFF
-    (``FORM``/``AIFC``) or raw ADTS AAC (``0xFFF1``), so both raise before any
-    decoder runs even though ffmpeg reads them fine.
+    Covers two gaps. mlx-audio picks a decoder from magic bytes and has no
+    branch for AIFF (``FORM``/``AIFC``) or raw ADTS AAC (``0xFFF1``), so both
+    raise before any decoder runs. It also pipes MP4/M4A to ffmpeg on stdin,
+    which fails whenever the ``moov`` index sits at the end of the file — the
+    normal layout unless the encoder was told ``+faststart``.
 
-    Asks ffmpeg for raw ``s16le`` rather than WAV: a pipe is not seekable, so
-    ffmpeg cannot backfill the RIFF size field and emits a ``0xFFFFFFFF``
-    placeholder instead. Raw PCM has no header to misparse.
+    So write to a real file rather than piping: ffmpeg cannot seek backwards on
+    a pipe, and on an unseekable MP4 it decodes nothing and exits 0, which is
+    how an entirely valid recording turns into an empty array.
+
+    Asks for raw ``s16le`` rather than WAV for the same reason in reverse: on
+    unseekable *output* ffmpeg cannot backfill the RIFF size field and writes a
+    ``0xFFFFFFFF`` placeholder. Raw PCM has no header to misparse.
     """
     if shutil.which("ffmpeg") is None:
         raise RuntimeError(
@@ -34,13 +41,17 @@ def _decode_with_ffmpeg(data: bytes) -> np.ndarray:
             "WAV, MP3 or FLAC first."
         )
 
-    # fmt: off
-    command = [
-        "ffmpeg", "-loglevel", "error", "-i", "pipe:0",
-        "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", "pipe:1",
-    ]
-    # fmt: on
-    result = subprocess.run(command, input=data, capture_output=True, check=False)
+    with tempfile.NamedTemporaryFile(suffix=".audio") as source:
+        source.write(data)
+        source.flush()
+        # fmt: off
+        command = [
+            "ffmpeg", "-loglevel", "error", "-i", source.name,
+            "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", "pipe:1",
+        ]
+        # fmt: on
+        result = subprocess.run(command, capture_output=True, check=False)
+
     if result.returncode != 0:
         detail = result.stderr.decode("utf-8", "replace").strip().splitlines()
         raise ValueError(
@@ -54,9 +65,9 @@ def decode_to_mono16k(file) -> tuple[np.ndarray, float]:
     """Decode an uploaded or recorded audio file to a mono 16 kHz waveform.
 
     Streamlit's ``UploadedFile`` is a ``BytesIO`` subclass and mlx-audio's reader
-    accepts one directly, so the whole decode / downmix / resample happens in one
-    call with no temporary file on disk. Formats its sniffer does not recognise
-    fall back to ffmpeg.
+    accepts one directly, so the common path does decode, downmix and resample in
+    one call with no temporary file. Anything it cannot handle falls back to
+    ffmpeg.
 
     Returns the waveform and its duration in seconds.
     """
@@ -69,6 +80,11 @@ def decode_to_mono16k(file) -> tuple[np.ndarray, float]:
         )
         waveform = np.asarray(audio, dtype=np.float32).reshape(-1)
     except ValueError:
+        waveform = np.empty(0, dtype=np.float32)
+
+    # An empty result is a failure, not silence: mlx-audio returns one instead
+    # of raising when its piped ffmpeg call cannot seek. Retry before giving up.
+    if waveform.size == 0:
         waveform = _decode_with_ffmpeg(data)
 
     if waveform.size == 0:
