@@ -31,6 +31,27 @@ streamlit run streamlit_app.py
 
 The first transcription downloads ~4 GB of weights into `~/.cache/huggingface`.
 
+## Verify
+
+```bash
+.venv/bin/python verify_transcription.py
+```
+
+Synthesizes speech with macOS `say`, so the reference text is exact, then checks
+the transcript against it. Covers what `AppTest` cannot reach: long-form
+splitting past the 35-second window, SRT/VTT export from real segments, and the
+VAD path. Current results on an M-series Mac:
+
+| Check | WER | Segments | RTFx |
+| --- | --- | --- | --- |
+| Short (7 s) | 0.0% | 1 | 32× |
+| Long-form (42 s) | 0.9% | 2 | 35× |
+| VAD (7 s) | 0.0% | 1 | 12× |
+
+The 0.9% is a single comma. This exists because a broken checkpoint returns a
+confident, non-empty, correctly-typed string — only a comparison against text we
+wrote ourselves tells the two apart.
+
 ## Model
 
 [Cohere Transcribe 03-2026](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026)
@@ -67,17 +88,24 @@ These are model limits, not missing features in this app:
   with real silences, at the cost of accuracy on dense narration — hence off by
   default.
 
-## Known upstream issue
+## Known upstream issues
 
-mlx-audio 0.4.7 crashes on `vad=True` for this model: `cohere_asr/vad.py` hands an
-`mx.array` to a Silero backend that calls `.astype(np.float32)`, which MLX rejects.
-`utils/models._patch_vad_dtype` coerces the input to numpy. Delete it once
-mlx-audio ships a fix.
+**`vad=True` crashes in mlx-audio 0.4.7.** `Model._segment_with_vad` is numpy
+code — its own return annotation is `List[np.ndarray]` — but `generate` hands it
+the `mx.array` from `_to_mono`. It fails twice: `.astype(np.float32)` inside the
+Silero backend, then `waveform[a:b].copy()` when slicing runs out. MLX arrays
+have neither method. `utils/models._patch_vad_dtype` coerces once at that
+boundary. Delete it once mlx-audio ships a fix.
+
+**mlx-audio cannot identify AIFF or raw AAC.** Its format sniffer matches magic
+bytes and has no branch for `FORM`/`AIFC` or ADTS `0xFFF1`, so both raise before
+any decoder runs. `utils/audio._decode_with_ffmpeg` retries them through ffmpeg.
 
 ## Layout
 
 ```
-streamlit_app.py     UI
-utils/audio.py       decoding to mono 16 kHz, SRT/VTT formatting
-utils/models.py      checkpoint registry, language table, cached loader
+streamlit_app.py           UI
+utils/audio.py             decoding to mono 16 kHz, SRT/VTT formatting
+utils/models.py            checkpoint registry, language table, cached loader
+verify_transcription.py    smoke test against known ground truth
 ```
