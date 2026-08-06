@@ -1,0 +1,7 @@
+[server]
+# An hour of 48 kHz stereo WAV runs well past Streamlit's 200 MB default.
+maxUploadSize = 1000
+
+[theme]
+primaryColor = "#D5573B"
+baseFontSize = 15

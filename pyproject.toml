@@ -1,0 +1,11 @@
+[project]
+name = "cohere-transcribe"
+version = "0.1.0"
+description = "Streamlit application for transcription using Cohere Transcribe on Apple Silicon with MLX."
+requires-python = ">=3.10"
+dependencies = [
+    "streamlit>=1.57",
+    # 0.4.4 brought the faster long-form path and VAD pre-processing for Cohere ASR.
+    "mlx-audio>=0.4.4",
+    "numpy>=2.0",
+]
