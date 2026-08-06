@@ -1,8 +1,8 @@
 """Smoke test the real transcription path against known ground truth.
 
-Run from the repository root, once `hf auth login` has a valid token:
+Run from the repository root, once `uv run hf auth login` has a valid token:
 
-    .venv/bin/python verify_transcription.py
+    uv run verify_transcription.py
 
 Synthesizes speech with macOS `say`, so the reference text is exact and word
 error rate is meaningful. A working checkpoint scores near 0%. The failure this

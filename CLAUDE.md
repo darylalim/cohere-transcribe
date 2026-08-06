@@ -12,18 +12,26 @@ beyond Streamlit.
 ## Commands
 
 ```bash
-uv venv --python 3.12 && uv pip install -e .    # setup; needs Apple Silicon for MLX
-.venv/bin/streamlit run streamlit_app.py        # run the app
-.venv/bin/python verify_transcription.py        # the only test — see below
+uv sync                                         # setup; needs Apple Silicon for MLX
+uv run streamlit run streamlit_app.py           # run the app
+uv run verify_transcription.py                  # the only test — see below
 uvx ruff@0.16.1 check . && uvx ruff@0.16.1 format .
 uvx ty check .
 ```
 
+Use `uv sync`, never `uv pip install -e .` — the latter re-resolves from `pyproject.toml` and ignores
+the committed `uv.lock` entirely. That distinction is load-bearing here: `_patch_vad_dtype` wraps a
+*private* mlx-audio method against 0.4.7 internals while `pyproject.toml` only asks for `>=0.4.4`, so
+the lockfile is the only thing pinning the version that patch was written against. `pyproject.toml`
+has no `[build-system]` on purpose — uv then treats the project as non-packaged and installs just the
+dependencies, which is what the app wants, since it runs as scripts from the repo root and imports
+`utils` relative to cwd.
+
 ruff and ty are not project dependencies — run them through `uvx`. Both currently pass clean, as does
 `ruff format --check`.
 
-The weights are gated: accept the terms on the Hub, then `hf auth login` (`.venv/bin/hf`). Only wav,
-mp3 and flac decode through miniaudio; every other advertised format needs `ffmpeg` on PATH.
+The weights are gated: accept the terms on the Hub, then `uv run hf auth login`. Only wav, mp3 and
+flac decode through miniaudio; every other advertised format needs `ffmpeg` on PATH.
 
 ### Testing
 

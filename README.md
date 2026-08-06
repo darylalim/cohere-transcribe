@@ -8,8 +8,7 @@ Audio never leaves the machine — the model runs locally through
 ## Setup
 
 ```bash
-uv venv --python 3.12
-uv pip install -e .
+uv sync
 ```
 
 Only wav, mp3 and flac decode through miniaudio. Everything else — aiff, m4a,
@@ -20,13 +19,13 @@ The weights are gated. Accept the terms at
 then authenticate:
 
 ```bash
-hf auth login
+uv run hf auth login
 ```
 
 ## Run
 
 ```bash
-streamlit run streamlit_app.py
+uv run streamlit run streamlit_app.py
 ```
 
 The first transcription downloads ~4 GB of weights into `~/.cache/huggingface`.
@@ -34,7 +33,7 @@ The first transcription downloads ~4 GB of weights into `~/.cache/huggingface`.
 ## Verify
 
 ```bash
-.venv/bin/python verify_transcription.py
+uv run verify_transcription.py
 ```
 
 Synthesizes speech with macOS `say`, so the reference text is exact, then checks
