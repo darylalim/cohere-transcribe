@@ -19,6 +19,9 @@ uvx ruff@0.16.1 check . && uvx ruff@0.16.1 format .
 uvx ty check .
 ```
 
+When working with Python, invoke the relevant `/astral:<skill>` — `/astral:uv`, `/astral:ruff`,
+`/astral:ty` — to ensure best practices are followed.
+
 Use `uv sync`, never `uv pip install -e .` — the latter re-resolves from `pyproject.toml` and ignores
 the committed `uv.lock` entirely. That distinction is load-bearing here: `_patch_vad_dtype` wraps a
 *private* mlx-audio method against 0.4.7 internals while `pyproject.toml` only asks for `>=0.4.4`, so
