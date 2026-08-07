@@ -28,7 +28,9 @@ dependencies, which is what the app wants, since it runs as scripts from the rep
 `utils` relative to cwd.
 
 ruff and ty are not project dependencies — run them through `uvx`. Both currently pass clean, as does
-`ruff format --check`.
+`ruff format --check`. `required-version` in `pyproject.toml` pins ruff to 0.16.1, so an unpinned
+`uvx ruff` or an editor's bundled copy refuses to run rather than linting under a different default
+rule set — the version is what decides which rules exist, and this project has no `select` of its own.
 
 The weights are gated: accept the terms on the Hub, then `uv run hf auth login`. Only wav, mp3 and
 flac decode through miniaudio; every other advertised format needs `ffmpeg` on PATH.
@@ -94,7 +96,8 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   mlx-audio raises `ValueError`, `miniaudio.DecodeError` and `RuntimeError` for the same condition.
 - **Imports sit below `st.set_page_config` in `streamlit_app.py`** (it must be the first Streamlit
   call) and below `warnings.filterwarnings` in `verify_transcription.py`. E402 is not in ruff's default
-  rule set, so this passes lint — do not reorder.
+  rule set *and* `[tool.ruff.lint] extend-ignore` names it explicitly, so this passes lint — do not
+  reorder.
 - **Session state is invalidated only when a new source exists.** Clearing the uploader or switching to
   Record must not discard a finished transcript; that can be minutes of unrecoverable work.
 - **The status label reports total wall clock, the Elapsed metric reports generation only.** RTFx needs

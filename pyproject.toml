@@ -9,3 +9,18 @@ dependencies = [
     "mlx-audio>=0.4.4",
     "numpy>=2.0",
 ]
+
+[tool.ruff]
+# Pinned because rule-set drift is a runtime hazard here, not a style question.
+# Ruff's defaults have widened across releases, and the codebase is clean only
+# under this one; see lint.extend-ignore below for the rule that must stay off.
+required-version = "==0.16.1"
+
+[tool.ruff.lint]
+# E402 is absent from the default rule set, so this is a no-op today and a guard
+# against the release that adds it. Imports in streamlit_app.py sit below
+# st.set_page_config because it must be the first Streamlit call, and in
+# verify_transcription.py below warnings.filterwarnings. Hoisting them to the top
+# is what E402 asks for and it breaks both files at runtime, while lint reports
+# success -- the one failure mode a linter should never be able to cause.
+extend-ignore = ["E402"]
