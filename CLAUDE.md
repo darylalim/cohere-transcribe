@@ -32,6 +32,15 @@ ruff and ty are not project dependencies — run them through `uvx`. Both curren
 `uvx ruff` or an editor's bundled copy refuses to run rather than linting under a different default
 rule set — the version is what decides which rules exist, and this project has no `select` of its own.
 
+ty is deliberately *not* pinned the same way: it is pre-1.0 and ships near-daily, so a pin would go
+stale within weeks, and it has no `required-version` setting to hold one anyway. Clean as of ty
+0.0.69. A new release surfacing new diagnostics is expected rather than a regression. The two
+`ty: ignore` directives in `utils/models.py` need no policing — `unused-ignore-comment` is on by
+default, so ty reports them itself once its inference no longer needs them. Note also that ty checks
+against **Python 3.10**, inferred from `requires-python`, not the 3.12 in `.python-version`: that is
+what verifies the floor the package claims, and it is why `enum.StrEnum` degrades to `Unknown` in
+`--verbose` output. Do not "fix" that by pinning `[tool.ty.environment] python-version` to 3.12.
+
 The weights are gated: accept the terms on the Hub, then `uv run hf auth login`. Only wav, mp3 and
 flac decode through miniaudio; every other advertised format needs `ffmpeg` on PATH.
 
