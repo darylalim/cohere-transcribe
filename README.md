@@ -1,4 +1,4 @@
-# cohere-transcribe
+# Cohere Transcribe
 
 [![CI](https://github.com/darylalim/cohere-transcribe/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/darylalim/cohere-transcribe/actions/workflows/ci.yml)
 
