@@ -34,6 +34,21 @@ The first transcription downloads ~4 GB of weights into `~/.cache/huggingface`.
 
 ## Verify
 
+Two layers. The fast one needs nothing installed beyond `uv sync`:
+
+```bash
+uv run pytest
+```
+
+Covers the pure functions — subtitle formatting, duration and timestamp
+rendering, cue filtering, VAD segment capping, and the word-error-rate and
+non-ASCII-ratio functions that decide whether the integration test below passes.
+No model, no audio, no network; it runs in well under a second and is the only
+check here that also runs on Linux. It still needs `uv sync` to succeed, so in
+practice that means Apple Silicon or Linux — mlx publishes no Intel-macOS wheel.
+
+The slow one needs weights:
+
 ```bash
 uv run verify_transcription.py
 ```
@@ -116,4 +131,5 @@ streamlit_app.py           UI
 utils/audio.py             decoding to mono 16 kHz, SRT/VTT formatting
 utils/models.py            checkpoint registry, language table, cached loader
 verify_transcription.py    smoke test against known ground truth
+tests/test_pure.py         unit tests for the pure functions — no model needed
 ```

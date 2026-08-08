@@ -154,9 +154,20 @@ def to_srt(segments: Sequence[dict]) -> str:
 
 
 def to_vtt(segments: Sequence[dict]) -> str:
-    """Build a WebVTT file from the model's chunk segments."""
+    """Build a WebVTT file from the model's chunk segments.
+
+    Empty rather than a bare ``WEBVTT`` header when nothing survives ``_cues``.
+    streamlit_app.py disables each download button on a falsy string, and a
+    truthy header-only file left the VTT button live on exactly the transcripts
+    whose SRT button had already greyed out -- a no-speech result still has
+    segments, so both writers run and only one of them returned something empty.
+    """
+    cues = _cues(segments)
+    if not cues:
+        return ""
+
     blocks = ["WEBVTT\n"]
-    for seg in _cues(segments):
+    for seg in cues:
         start = _timestamp(seg["start"], ".")
         end = _timestamp(seg["end"], ".")
         blocks.append(f"{start} --> {end}\n{seg['text'].strip()}\n")

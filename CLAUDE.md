@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A single-page Streamlit app that runs [Cohere Transcribe 03-2026](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026)
 — a 2B-parameter ASR model — locally on Apple Silicon through `mlx-audio`. Audio never leaves the
-machine; the only network call is the Hugging Face weight download. Four Python files, no framework
+machine; the only network call is the Hugging Face weight download. Five Python files, no framework
 beyond Streamlit.
 
 ## Commands
@@ -14,7 +14,8 @@ beyond Streamlit.
 ```bash
 uv sync                                         # setup; needs Apple Silicon for MLX
 uv run streamlit run streamlit_app.py           # run the app
-uv run verify_transcription.py                  # the only test — see below
+uv run pytest                                   # fast unit tests, no model
+uv run verify_transcription.py                  # integration test — see below
 uvx ruff@0.16.1 check . && uvx ruff@0.16.1 format .
 uvx ty check .
 ```
@@ -49,24 +50,73 @@ flac decode through miniaudio; every other advertised format needs `ffmpeg` on P
 
 ### Testing
 
-There is no pytest suite. `verify_transcription.py` is the whole test story, and it is an integration
-test: it synthesizes speech with macOS `say` so the reference text is exact, decodes every format in
-`UPLOAD_TYPES`, then runs short / long-form / VAD transcriptions and fails on WER > 15% or > 5%
-non-ASCII characters. It takes no flags to select a subset — comment out calls in `run()` for that.
-Needs macOS, ffmpeg, a valid HF token, and downloads ~4 GB on first run; a full pass takes minutes.
+Two layers with a strict division of labour. Do not let either drift into the other's job.
 
-It exists *instead of* unit tests because the bug it guards against — a decoder left randomly
-initialised at load — returns a confident, non-empty, correctly-typed string. Only a comparison
-against text we authored ourselves distinguishes a working checkpoint from a broken one.
+**`verify_transcription.py` — the integration test.** Synthesizes speech with macOS `say` so the
+reference text is exact, decodes every format in `UPLOAD_TYPES`, then runs short / long-form / VAD
+transcriptions and fails on WER > 15% or > 5% non-ASCII characters. It takes no flags to select a
+subset — comment out calls in `run()` for that. Needs macOS, ffmpeg, a valid HF token, and downloads
+~4 GB on first run; a full pass takes minutes.
+
+It is the *only* thing that can catch the bug it was written for — a decoder left randomly
+initialised at load returns a confident, non-empty, correctly-typed string, so nothing short of a
+comparison against text we authored ourselves distinguishes a working checkpoint from a broken one.
+No unit test can replace it and none should try.
+
+**`tests/test_pure.py` — unit tests, no model.** Runs in under a second, on any platform `uv sync`
+supports (Apple Silicon or Linux — mlx publishes no Intel-macOS wheel). Its core is the three things
+the integration test structurally cannot reach:
+
+- **Its own oracle.** `word_error_rate` and `non_ascii_ratio` are the entire pass/fail decision over
+  there, and a bug in either fails *toward a false pass* — a WER that drifts low reads as a better
+  transcript, so a broken checkpoint would go green. Nothing else checks them.
+- **Branches `say` cannot reach.** `_cap_segment_length` fires only when Silero detects no speech,
+  and `_cues` only on a malformed segment. Every fixture over there is wall-to-wall synthesized
+  speech, so neither had ever executed in a test.
+- **Subtitle structure.** `verify_transcription.py` asserts `"-->" in srt` and a WEBVTT prefix, which
+  pass just as happily on indices starting at 0 or the two separators swapped. The unit tests assert
+  both files byte for byte.
+
+The rest is app-only code `verify_transcription.py` never touches at all — `format_duration`,
+`_timestamp`, `Transcript.speedup` and `Transcript.stem`. That is about a third of the file, so do
+not read the three categories above as a closed charter for what belongs here.
+
+Both thresholds live in `verify_transcription.py` as `MAX_WER` and `MAX_NON_ASCII` so the unit tests
+can import the real numbers. Re-typing them in the test would have let a loosened threshold pass a
+test written specifically to catch a loosened threshold.
+
+**Never add a test that mocks `model.generate`.** A stub returning a plausible string asserts that
+the dataclass holds a string, which was never in doubt, and it is the exact shape of the false
+confidence `verify_transcription.py` exists to defeat. Real decoding stays out too — `check_decoding`
+already covers it against nine actual containers.
+
+`[tool.pytest.ini_options] pythonpath = ["."]` is load-bearing, not boilerplate: with no
+`[build-system]` the project is never installed, and pytest puts `tests/` on `sys.path` rather than
+the repo root, so `from utils.audio import ...` raises `ModuleNotFoundError` without it. Prefer it to
+adding `tests/__init__.py`, which achieves the same thing as an unexplained side effect of packaging.
+
+Note that `_cues` handles `segments=None` via `for seg in segments or []` while its annotation says
+`Iterable[dict]`, so ty rejects a test asserting on it. The guard is unreachable from every current
+caller — `Transcript.segments` defaults to a list and `output.segments or []` coerces at
+construction — so it is untested on purpose rather than by oversight.
 
 ### CI
 
-`.github/workflows/ci.yml` adds no tests; it runs the ones already here. Three jobs: `lint` on
-ubuntu (ruff, and `uv lock --check`), `check` on macos-15 (`uv sync --locked`, ty, and the decode
-matrix), and `integration`, which runs the whole script against real weights and is
-`workflow_dispatch` only — gated weights plus GitHub withholding secrets from fork pull requests
-mean it can never be a required check. It needs an `HF_TOKEN` repository secret; `huggingface_hub`
-reads that env var directly, so CI needs no `hf auth login`.
+`.github/workflows/ci.yml` adds no tests; it runs the ones already here. Four jobs: `lint` on ubuntu
+(ruff, and `uv lock --check`), `test` on ubuntu (`uv sync --locked` and pytest), `check` on macos-15
+(`uv sync --locked`, ty, and the decode matrix), and `integration`, which runs the whole script
+against real weights and is `workflow_dispatch` only — gated weights plus GitHub withholding secrets
+from fork pull requests mean it can never be a required check. It needs an `HF_TOKEN` repository
+secret; `huggingface_hub` reads that env var directly, so CI needs no `hf auth login`.
+
+`test` is on ubuntu because it is the one job that can be: `tests/test_pure.py` never imports
+`mlx_audio` — `utils/` keeps those imports inside the functions that need them — so it needs no Apple
+Silicon, ffmpeg, `say` or token, and Linux runners bill at a fraction of the macOS rate. It doubles
+as the check that `uv sync --locked` really does resolve on Linux — a property `check`'s comment used
+to wave away as not mattering, and which now has a job depending on it, so that comment was corrected
+rather than left to contradict this one. `integration` gates on `lint` and `test` both: no sense
+spending forty minutes and four gigabytes to discover that `word_error_rate`, which decides that
+job's own verdict, is broken.
 
 Two consequences worth knowing before editing anything:
 
@@ -86,6 +136,7 @@ streamlit_app.py           UI, session state, error presentation
 utils/audio.py             decode to mono 16 kHz float32; SRT/VTT formatting
 utils/models.py            checkpoint registry, language table, cached loader, mlx-audio VAD shim
 verify_transcription.py    integration test against known ground truth
+tests/test_pure.py         unit tests for the pure functions, and for the test oracle above
 ```
 
 Flow: `UploadedFile` (or `st.audio_input`) → `decode_to_mono16k` → flat `np.float32` array at 16 kHz +

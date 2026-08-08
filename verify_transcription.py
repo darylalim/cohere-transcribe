@@ -33,6 +33,12 @@ warnings.filterwarnings("ignore")
 from utils.audio import UPLOAD_TYPES, decode_to_mono16k, to_srt, to_vtt
 from utils.models import DEFAULT_REPO, load_asr
 
+# Named rather than inlined at the comparisons so tests/test_pure.py can import
+# the actual numbers. Re-typing them there would have let a loosened threshold
+# here pass a test written specifically to catch a loosened threshold.
+MAX_WER = 0.15
+MAX_NON_ASCII = 0.05
+
 SHORT_TEXT = (
     "The quick brown fox jumps over the lazy dog while the ambitious "
     "researcher calibrates the spectrometer in the basement laboratory."
@@ -132,14 +138,14 @@ def check(label: str, reference: str, model, tmp: pathlib.Path, **kwargs) -> dic
 
     if not text:
         raise Failure(f"{label}: transcript is empty")
-    if foreign > 0.05:
+    if foreign > MAX_NON_ASCII:
         raise Failure(
             f"{label}: {foreign:.0%} non-ASCII characters -- this is the random "
             "decoder signature, the checkpoint is not loading correctly"
         )
-    if wer > 0.15:
+    if wer > MAX_WER:
         raise Failure(
-            f"{label}: WER {wer:.1%} exceeds the 15% threshold.\n"
+            f"{label}: WER {wer:.1%} exceeds the {MAX_WER:.0%} threshold.\n"
             f"  expected: {reference}\n"
             f"  got:      {text}"
         )

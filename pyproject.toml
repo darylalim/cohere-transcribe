@@ -10,6 +10,23 @@ dependencies = [
     "numpy>=2.0",
 ]
 
+# pytest is a dev group rather than a project dependency, so `uv sync` installs it
+# for contributors and CI while it stays out of the app's own dependency set. The
+# suite it runs covers only pure functions -- see tests/test_pure.py for what
+# deliberately stays out of it.
+[dependency-groups]
+dev = ["pytest>=8.4"]
+
+[tool.pytest.ini_options]
+# Required, not a convenience. pyproject.toml has no [build-system] on purpose, so
+# the project is never installed into the venv and `utils` is imported relative to
+# the repo root. pytest puts the first non-package parent of a test file on
+# sys.path -- that is `tests/`, not the root -- so `from utils.audio import ...`
+# raises ModuleNotFoundError without this. Preferred over adding tests/__init__.py
+# because it states the reason rather than relying on a side effect of packaging.
+pythonpath = ["."]
+testpaths = ["tests"]
+
 [tool.ruff]
 # Pinned because rule-set drift is a runtime hazard here, not a style question.
 # Ruff's defaults have widened across releases, and the codebase is clean only

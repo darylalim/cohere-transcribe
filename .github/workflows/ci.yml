@@ -86,11 +86,48 @@ jobs:
         if: ${{ !cancelled() }}
         run: uv lock --check
 
+  test:
+    # ubuntu, and this is the one job here that can be. tests/test_pure.py never
+    # imports mlx_audio -- utils/ keeps those imports inside the functions that
+    # need them -- so nothing in this job needs Apple Silicon, ffmpeg, `say` or a
+    # token, and Linux runners bill at a fraction of the macOS rate.
+    #
+    # It doubles as the check that `uv sync --locked` actually resolves on Linux,
+    # which the `check` job below only asserts in a comment: mlx ships manylinux
+    # wheels and mlx-metal is gated behind sys_platform == 'darwin', so a lockfile
+    # change that breaks that arrangement turns this job red rather than being
+    # discovered by a contributor.
+    name: test (ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      # --locked for the same reason every other job uses it: uv.lock is the only
+      # thing pinning mlx-audio to the 0.4.7 that _patch_vad_dtype was written
+      # against. pytest arrives with it, from the `dev` dependency group.
+      - name: uv sync
+        run: uv sync --locked
+
+      - name: pytest
+        run: uv run --locked pytest
+
   check:
-    # macOS on purpose. mlx ships manylinux wheels and only mlx-metal is
-    # Darwin-only, so `uv sync` does resolve on Linux -- but Apple Silicon is
-    # the only platform this app claims to run on, and a Linux-only resolution
-    # failure would be red for a reason that does not matter to the project.
+    # macOS on purpose: ty runs against the real dependency tree and the decode
+    # matrix goes through miniaudio and ffmpeg, and Apple Silicon is the only
+    # platform this app claims to run on.
+    #
+    # This comment used to add that a Linux-only resolution failure "would be red
+    # for a reason that does not matter to the project". That is no longer the
+    # position: the `test` job above deliberately syncs on Linux, because that is
+    # what lets the pure tests run on a cheap runner. Resolving on Linux went
+    # from an incidental property to one CI asserts. What stays true is that
+    # nothing Linux can do substitutes for this job.
+    #
     # macos-15 rather than macos-latest, which now points at macOS 26: the label
     # is pinned so an image promotion cannot change the MLX runtime under the
     # build.
@@ -190,13 +227,15 @@ jobs:
     # can never pass as a required check on an outside contribution. It also
     # downloads ~4 GB and runs a 2B-parameter model end to end.
     #
-    # Gated on lint because the asymmetry is stark: lint returns a verdict in
-    # under a minute, and there is no sense spending forty and four gigabytes to
-    # discover that uv.lock had drifted. Not gated on `check`, which would add
-    # its own twenty minutes to a job that already has the same prerequisites.
+    # Gated on lint and test because the asymmetry is stark: both return a
+    # verdict in under a minute, and there is no sense spending forty and four
+    # gigabytes to discover that uv.lock had drifted -- or that word_error_rate,
+    # which decides this job's own verdict, is broken. Not gated on `check`,
+    # which would add its own twenty minutes to a job that already has the same
+    # prerequisites.
     name: integration (real weights)
     if: inputs.integration
-    needs: [lint]
+    needs: [lint, test]
     runs-on: macos-15
     timeout-minutes: 60
     env:
