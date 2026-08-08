@@ -1,0 +1,193 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      integration:
+        description: "Run verify_transcription.py against the real weights (~4 GB download, tens of minutes)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  # Superseded pushes to a pull request are wasted work; a push to main is left
+  # to finish. This governs *in-progress* runs only -- a run still queued behind
+  # another in the same group is replaced when a newer push arrives, so a commit
+  # in the middle of a burst can end up without a run of its own. Harmless here
+  # because every check below asserts against the whole tree rather than against
+  # a diff, so the surviving run always covers the tip.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+defaults:
+  run:
+    # Not cosmetic: an unset shell runs `bash -e`, while an explicit `bash` runs
+    # `bash --noprofile --norc -eo pipefail`. Without pipefail a failing command
+    # on the left of a pipe is masked by whatever it is piped into.
+    shell: bash
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      # `ruff@0.16.1`, never a bare `uvx ruff`. `required-version` in
+      # pyproject.toml makes any other version refuse to run rather than lint
+      # under a different default rule set, and this project has no `select` of
+      # its own -- the version is what decides which rules exist. Bump both
+      # together or neither.
+      - name: ruff check
+        run: uvx ruff@0.16.1 check --output-format=github .
+
+      - name: ruff format
+        run: uvx ruff@0.16.1 format --check --output-format=github .
+
+      # uv.lock is the only thing pinning mlx-audio to the 0.4.7 that
+      # `_patch_vad_dtype` was written against -- pyproject.toml asks only for
+      # >=0.4.4. A lockfile that has drifted from pyproject.toml is a real
+      # defect here, not bookkeeping, so it gets its own named check rather than
+      # being buried inside a sync step in another job.
+      - name: uv.lock matches pyproject.toml
+        run: uv lock --check
+
+  check:
+    # macOS on purpose. mlx ships manylinux wheels and only mlx-metal is
+    # Darwin-only, so `uv sync` does resolve on Linux -- but Apple Silicon is
+    # the only platform this app claims to run on, and a Linux-only resolution
+    # failure would be red for a reason that does not matter to the project.
+    # macos-15 rather than macos-latest: the label is pinned so an image
+    # promotion cannot change the MLX runtime under the build.
+    name: check (macOS)
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      # --locked, and never `uv pip install -e .`: the latter re-resolves from
+      # pyproject.toml and ignores the committed lockfile entirely.
+      - name: uv sync
+        run: uv sync --locked
+
+      # Advisory, exactly as .claude/hooks/edit-checks.sh treats it. ty is
+      # pre-1.0 and ships near-daily, so a new diagnostic is expected rather
+      # than a regression, and a ty release must not turn an unrelated pull
+      # request red. ruff is the blocking checker because required-version makes
+      # its verdict reproducible; ty has no equivalent setting to hold a pin.
+      - name: ty check (advisory)
+        continue-on-error: true
+        run: uvx ty check .
+
+      # Not preinstalled on the macOS runner images, and not optional: only wav,
+      # mp3 and flac decode through miniaudio, so six of the nine rows in
+      # UPLOAD_TYPES reach ffmpeg -- and check_decoding also uses it to *encode*
+      # the fixtures it then decodes.
+      - name: Install ffmpeg
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+        run: brew install ffmpeg
+
+      # `say` is what makes the reference text exact, and it is the one
+      # prerequisite GitHub does not document for its runner images. Probe it on
+      # its own line so an image with no installed voice says so, instead of
+      # surfacing as nine unexplained decode failures in the next step.
+      - name: Probe the macOS speech synthesizer
+        run: |
+          say -o "${RUNNER_TEMP}/probe.aiff" "probe one two three"
+          bytes=$(wc -c < "${RUNNER_TEMP}/probe.aiff")
+          echo "say produced ${bytes} bytes"
+          if [ "${bytes}" -lt 1000 ]; then
+            echo "::error::say produced only ${bytes} bytes; this runner image has no usable voice"
+            exit 1
+          fi
+
+      # The half of verify_transcription.py that needs no checkpoint: it
+      # synthesizes one source file and asserts every advertised upload format
+      # decodes back to the same duration. Calls the project's own
+      # check_decoding rather than reimplementing the matrix in YAML, so adding
+      # a row to UPLOAD_TYPES is picked up here for free -- and so this cannot
+      # drift from what the real test asserts.
+      - name: Decode every advertised upload format
+        run: |
+          uv run --locked python - <<'PY'
+          import pathlib
+          import shutil
+          import sys
+          import tempfile
+
+          from verify_transcription import check_decoding
+
+          for binary in ("say", "ffmpeg"):
+              if shutil.which(binary) is None:
+                  sys.exit(f"`{binary}` is not on PATH")
+
+          with tempfile.TemporaryDirectory(prefix="cohere-ci-") as tmp:
+              failures = check_decoding(pathlib.Path(tmp))
+
+          for failure in failures:
+              print(f"::error::{failure}")
+          sys.exit(1 if failures else 0)
+          PY
+
+  integration:
+    # Manual only, and it could not be otherwise: the checkpoint is gated, and
+    # repository secrets are not exposed to pull requests from forks, so this
+    # can never pass as a required check on an outside contribution. It also
+    # downloads ~4 GB and runs a 2B-parameter model end to end.
+    name: integration (real weights)
+    if: inputs.integration
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      # The secrets context is not available in a job-level `if:`, so the token
+      # check has to be a step. Fail on it explicitly: an absent token otherwise
+      # surfaces minutes in, as a GatedRepoError from load_asr.
+      - name: Require an HF token
+        run: |
+          if [ -z "${HF_TOKEN}" ]; then
+            echo "::error::HF_TOKEN is not set. The weights are gated: accept the terms at https://huggingface.co/CohereLabs/cohere-transcribe-03-2026, then add a read token as a repository secret named HF_TOKEN."
+            exit 1
+          fi
+
+      - name: Install ffmpeg
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+        run: brew install ffmpeg
+
+      - name: uv sync
+        run: uv sync --locked
+
+      # huggingface_hub reads HF_TOKEN from the environment, so there is no
+      # `hf auth login` step to run here.
+      #
+      # The Hub cache is deliberately not restored with actions/cache: the
+      # checkpoint is ~4 GB against a 10 GB per-repository cache limit, so
+      # caching it would evict the uv cache that every job depends on, to save a
+      # download this manually-triggered job performs a handful of times a year.
+      - name: verify_transcription.py
+        run: uv run --locked verify_transcription.py

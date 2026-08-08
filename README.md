@@ -1,5 +1,7 @@
 # cohere-transcribe
 
+[![CI](https://github.com/darylalim/cohere-transcribe/actions/workflows/ci.yml/badge.svg)](https://github.com/darylalim/cohere-transcribe/actions/workflows/ci.yml)
+
 Streamlit application for transcription using Cohere Transcribe on Apple Silicon with MLX.
 
 Audio never leaves the machine — the model runs locally through
