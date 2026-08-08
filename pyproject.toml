@@ -10,12 +10,22 @@ dependencies = [
     "numpy>=2.0",
 ]
 
-# pytest is a dev group rather than a project dependency, so `uv sync` installs it
-# for contributors and CI while it stays out of the app's own dependency set. The
-# suite it runs covers only pure functions -- see tests/test_pure.py for what
+# Dev-only tooling: `uv sync` installs it for contributors and CI while it stays
+# out of the app's own dependency set.
+#
+# pytest runs the pure-function suite -- see tests/test_pure.py for what
 # deliberately stays out of it.
+#
+# watchdog is what Streamlit's file watcher uses when it is importable. Without
+# it `server.fileWatcherType = "auto"` degrades to polling every source file on a
+# timer, which is why `streamlit run` prints its "For better performance, install
+# the Watchdog module" notice. Nothing the app does at runtime imports it, so it
+# has no place in [project.dependencies].
 [dependency-groups]
-dev = ["pytest>=8.4"]
+dev = [
+    "pytest>=8.4",
+    "watchdog>=6.0.0",
+]
 
 [tool.pytest.ini_options]
 # Required, not a convenience. pyproject.toml has no [build-system] on purpose, so
