@@ -84,10 +84,14 @@ st.caption(
     "Nothing is uploaded anywhere."
 )
 
+# required=True, because single-selection segmented controls are deselectable by
+# default: clicking the lit segment returns None, which falls through to the else
+# below and draws the uploader under a control with nothing selected.
 mode = st.segmented_control(
     "Input",
     ["Upload a file", "Record"],
     default="Upload a file",
+    required=True,
     label_visibility="collapsed",
 )
 
