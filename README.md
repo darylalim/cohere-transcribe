@@ -156,3 +156,12 @@ utils/models.py            checkpoint registry, language table, cached loader,
 verify_transcription.py    integration test against known ground truth
 tests/test_pure.py         unit tests for the pure functions — no model needed
 ```
+
+## License
+
+[MIT](LICENSE), covering the code in this repository.
+
+The weights are not part of it and carry their own terms: Cohere Transcribe
+03-2026 is Apache 2.0, but gated, so access is granted by accepting the terms on
+the [model page](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026)
+rather than by this license.
