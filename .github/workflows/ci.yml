@@ -15,14 +15,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  # Superseded pushes to a pull request are wasted work; a push to main is left
-  # to finish. This governs *in-progress* runs only -- a run still queued behind
-  # another in the same group is replaced when a newer push arrives, so a commit
-  # in the middle of a burst can end up without a run of its own. Harmless here
-  # because every check below asserts against the whole tree rather than against
-  # a diff, so the surviving run always covers the tip.
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # Keyed on the pull request *number*, not github.head_ref: head_ref is only a
+  # branch name, so two pull requests opened from different forks that both use
+  # `patch-1` would share a group and cancel each other. github.event_name keeps
+  # a manually dispatched run out of the push group entirely -- a queued run is
+  # replaced when a newer one joins its group, and silently discarding a 4 GB
+  # integration run somebody asked for by hand is not recoverable by re-pushing.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:
@@ -43,23 +43,47 @@ jobs:
         with:
           enable-cache: true
 
-      # `ruff@0.16.1`, never a bare `uvx ruff`. `required-version` in
-      # pyproject.toml makes any other version refuse to run rather than lint
-      # under a different default rule set, and this project has no `select` of
-      # its own -- the version is what decides which rules exist. Bump both
-      # together or neither.
+      # Read the version from pyproject.toml rather than repeating the literal,
+      # the same way .claude/hooks/lib.sh does. b06c493 removed this literal from
+      # all four hooks because a checker that disagrees with required-version is
+      # worse than no checker: bumping the pin would leave CI invoking a ruff
+      # that refuses to run, so the job reports failure while linting nothing.
+      #
+      # Unlike ruff_pin() this does not fall back to a bare `ruff`. The hook
+      # falls back so a malformed pyproject cannot block an edit; here it is the
+      # defect itself, and a bare `ruff` would abort on required-version anyway.
+      - name: Resolve the pinned ruff
+        id: pin
+        run: |
+          pin=$(sed -n 's/^required-version *= *"==\([0-9][0-9.]*\)".*/\1/p' pyproject.toml | head -1)
+          if [ -z "${pin}" ]; then
+            echo "::error::could not read required-version from [tool.ruff] in pyproject.toml"
+            exit 1
+          fi
+          echo "RUFF=ruff@${pin}" >> "${GITHUB_ENV}"
+          echo "pinned ruff is ${pin}"
+
+      # Every check runs even when an earlier one failed. Steps abort the job by
+      # default, which is the same short-circuit .claude/hooks/gate.sh was
+      # rewritten to remove: chaining `format --check && check` there meant a
+      # whitespace slip stopped `ruff check` from ever running, and an undefined
+      # name rode out behind it. One push should surface every failure it has,
+      # not the first one alphabetically.
       - name: ruff check
-        run: uvx ruff@0.16.1 check --output-format=github .
+        if: ${{ !cancelled() && steps.pin.outcome == 'success' }}
+        run: uvx "${RUFF}" check --output-format=github .
 
       - name: ruff format
-        run: uvx ruff@0.16.1 format --check --output-format=github .
+        if: ${{ !cancelled() && steps.pin.outcome == 'success' }}
+        run: uvx "${RUFF}" format --check --output-format=github .
 
       # uv.lock is the only thing pinning mlx-audio to the 0.4.7 that
       # `_patch_vad_dtype` was written against -- pyproject.toml asks only for
-      # >=0.4.4. A lockfile that has drifted from pyproject.toml is a real
-      # defect here, not bookkeeping, so it gets its own named check rather than
-      # being buried inside a sync step in another job.
+      # >=0.4.4. A lockfile that has drifted from pyproject.toml is a real defect
+      # here, not bookkeeping, so it gets its own named check rather than being
+      # buried inside a sync step in another job.
       - name: uv.lock matches pyproject.toml
+        if: ${{ !cancelled() }}
         run: uv lock --check
 
   check:
@@ -67,8 +91,9 @@ jobs:
     # Darwin-only, so `uv sync` does resolve on Linux -- but Apple Silicon is
     # the only platform this app claims to run on, and a Linux-only resolution
     # failure would be red for a reason that does not matter to the project.
-    # macos-15 rather than macos-latest: the label is pinned so an image
-    # promotion cannot change the MLX runtime under the build.
+    # macos-15 rather than macos-latest, which now points at macOS 26: the label
+    # is pinned so an image promotion cannot change the MLX runtime under the
+    # build.
     name: check (macOS)
     runs-on: macos-15
     timeout-minutes: 25
@@ -103,14 +128,15 @@ jobs:
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: brew install ffmpeg
 
-      # `say` is what makes the reference text exact, and it is the one
-      # prerequisite GitHub does not document for its runner images. Probe it on
-      # its own line so an image with no installed voice says so, instead of
-      # surfacing as nine unexplained decode failures in the next step.
       - name: Probe the macOS speech synthesizer
         run: |
+          # `say` is the one prerequisite GitHub does not document for its runner
+          # images, and its absence is indistinguishable from a decoding bug once
+          # check_decoding is running -- it would surface as nine failed formats.
+          # stat rather than `wc -c`, which pads its output on BSD: the error
+          # below is the entire diagnosis, and "only     52 bytes" reads as noise.
           say -o "${RUNNER_TEMP}/probe.aiff" "probe one two three"
-          bytes=$(wc -c < "${RUNNER_TEMP}/probe.aiff")
+          bytes=$(stat -f%z "${RUNNER_TEMP}/probe.aiff")
           echo "say produced ${bytes} bytes"
           if [ "${bytes}" -lt 1000 ]; then
             echo "::error::say produced only ${bytes} bytes; this runner image has no usable voice"
@@ -133,6 +159,19 @@ jobs:
 
           from verify_transcription import check_decoding
 
+
+          def annotate(message: str) -> str:
+              """Escape a failure for a ::error:: workflow command.
+
+              The runner percent-decodes %25, %0D and %0A out of the message, and
+              check_decoding produces both: the drift check formats a literal `%`
+              ("12% off"), and a surfaced ffmpeg stderr line arrives with
+              newlines. Unescaped, the annotation stops at the first newline --
+              and the annotation is the whole diagnosis of a red build.
+              """
+              return message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
           for binary in ("say", "ffmpeg"):
               if shutil.which(binary) is None:
                   sys.exit(f"`{binary}` is not on PATH")
@@ -141,7 +180,7 @@ jobs:
               failures = check_decoding(pathlib.Path(tmp))
 
           for failure in failures:
-              print(f"::error::{failure}")
+              print(f"::error::{annotate(str(failure))}")
           sys.exit(1 if failures else 0)
           PY
 
@@ -150,8 +189,14 @@ jobs:
     # repository secrets are not exposed to pull requests from forks, so this
     # can never pass as a required check on an outside contribution. It also
     # downloads ~4 GB and runs a 2B-parameter model end to end.
+    #
+    # Gated on lint because the asymmetry is stark: lint returns a verdict in
+    # under a minute, and there is no sense spending forty and four gigabytes to
+    # discover that uv.lock had drifted. Not gated on `check`, which would add
+    # its own twenty minutes to a job that already has the same prerequisites.
     name: integration (real weights)
     if: inputs.integration
+    needs: [lint]
     runs-on: macos-15
     timeout-minutes: 60
     env:
@@ -164,8 +209,9 @@ jobs:
           enable-cache: true
 
       # The secrets context is not available in a job-level `if:`, so the token
-      # check has to be a step. Fail on it explicitly: an absent token otherwise
-      # surfaces minutes in, as a GatedRepoError from load_asr.
+      # check has to be a step. Fail on it explicitly, and before the download:
+      # an absent token otherwise surfaces minutes in, as a GatedRepoError from
+      # load_asr.
       - name: Require an HF token
         run: |
           if [ -z "${HF_TOKEN}" ]; then
@@ -173,14 +219,28 @@ jobs:
             exit 1
           fi
 
+      - name: uv sync
+        run: uv sync --locked
+
       - name: Install ffmpeg
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: brew install ffmpeg
 
-      - name: uv sync
-        run: uv sync --locked
+      # Same probe as the check job, and it belongs here for the same reason it
+      # belongs there -- but it earns more: without it a voiceless image is
+      # discovered only after the ~4 GB download, as nine decode failures and
+      # three 100% word error rates that look nothing like their cause.
+      - name: Probe the macOS speech synthesizer
+        run: |
+          say -o "${RUNNER_TEMP}/probe.aiff" "probe one two three"
+          bytes=$(stat -f%z "${RUNNER_TEMP}/probe.aiff")
+          echo "say produced ${bytes} bytes"
+          if [ "${bytes}" -lt 1000 ]; then
+            echo "::error::say produced only ${bytes} bytes; this runner image has no usable voice"
+            exit 1
+          fi
 
       # huggingface_hub reads HF_TOKEN from the environment, so there is no
       # `hf auth login` step to run here.

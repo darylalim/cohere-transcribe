@@ -1,6 +1,6 @@
 # cohere-transcribe
 
-[![CI](https://github.com/darylalim/cohere-transcribe/actions/workflows/ci.yml/badge.svg)](https://github.com/darylalim/cohere-transcribe/actions/workflows/ci.yml)
+[![CI](https://github.com/darylalim/cohere-transcribe/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/darylalim/cohere-transcribe/actions/workflows/ci.yml)
 
 Streamlit application for transcription using Cohere Transcribe on Apple Silicon with MLX.
 

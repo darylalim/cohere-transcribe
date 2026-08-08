@@ -59,6 +59,26 @@ It exists *instead of* unit tests because the bug it guards against — a decode
 initialised at load — returns a confident, non-empty, correctly-typed string. Only a comparison
 against text we authored ourselves distinguishes a working checkpoint from a broken one.
 
+### CI
+
+`.github/workflows/ci.yml` adds no tests; it runs the ones already here. Three jobs: `lint` on
+ubuntu (ruff, and `uv lock --check`), `check` on macos-15 (`uv sync --locked`, ty, and the decode
+matrix), and `integration`, which runs the whole script against real weights and is
+`workflow_dispatch` only — gated weights plus GitHub withholding secrets from fork pull requests
+mean it can never be a required check. It needs an `HF_TOKEN` repository secret; `huggingface_hub`
+reads that env var directly, so CI needs no `hf auth login`.
+
+Two consequences worth knowing before editing anything:
+
+- **`check_decoding` now has a caller outside this repo's own `run()`.** The workflow imports it
+  directly to get the format matrix without a checkpoint. Its name, signature and
+  `list[Failure]` return are load-bearing for CI, not just for `verify_transcription.py`.
+- **The lint job mirrors the hooks rather than restating them.** It reads the ruff version out of
+  `required-version` exactly as `.claude/hooks/lib.sh` does, and every check runs under
+  `if: !cancelled()` so a formatting slip cannot stop `ruff check` from running — the same
+  short-circuit b06c493 removed from `gate.sh`. ruff blocks and ty is advisory there for the same
+  reasons it draws that line here.
+
 ## Architecture
 
 ```
