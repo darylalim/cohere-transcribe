@@ -64,11 +64,15 @@ jobs:
           echo "pinned ruff is ${pin}"
 
       # Every check runs even when an earlier one failed. Steps abort the job by
-      # default, which is the same short-circuit .claude/hooks/gate.sh was
-      # rewritten to remove: chaining `format --check && check` there meant a
-      # whitespace slip stopped `ruff check` from ever running, and an undefined
-      # name rode out behind it. One push should surface every failure it has,
-      # not the first one alphabetically.
+      # default, which is the same short-circuit the deleted Stop hook was
+      # rewritten to remove before it went: chaining `format --check && check`
+      # there meant a whitespace slip stopped `ruff check` from ever running, and
+      # an undefined name rode out behind it. One push should surface every
+      # failure it has, not the first one alphabetically.
+      #
+      # This is now the only repo-wide ruff anywhere -- .claude/hooks/edit-checks.sh
+      # sees just the file it was handed -- so a failure here is not a duplicate
+      # of something a hook already said.
       - name: ruff check
         if: ${{ !cancelled() && steps.pin.outcome == 'success' }}
         run: uvx "${RUFF}" check --output-format=github .

@@ -15,24 +15,12 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|Edit|Write|Read|NotebookEdit",
+        "matcher": "Bash|Edit|Write|Read",
         "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh",
             "timeout": 10
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/gate.sh",
-            "statusMessage": "repo gate",
-            "timeout": 120
           }
         ]
       }

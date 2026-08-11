@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Shared by the hooks in this directory. Sourced, never executed.
+# Sourced by edit-checks.sh, never executed. It is the only consumer left --
+# gate.sh was deleted and guard.sh's ruff-version rule with it -- but this stays
+# a file rather than being inlined because .github/workflows/ci.yml points at it
+# as where the pattern below is written down, and re-derives it in YAML.
 
 # pyproject.toml already single-sources the ruff version through
-# required-version; read it from there rather than repeating the literal in
-# every hook. A hook that disagrees with pyproject.toml is worse than no hook:
-# guard.sh would start denying the command pyproject.toml requires.
+# required-version; read it from there rather than repeating the literal. A hook
+# that disagrees with pyproject.toml is worse than no hook: it would invoke a
+# ruff that required-version refuses to run, and report failure while linting
+# nothing.
 ruff_pin() {
   local root="${1:-.}" pin
   pin=$(sed -n 's/^required-version *= *"==\([0-9][0-9.]*\)".*/\1/p' \

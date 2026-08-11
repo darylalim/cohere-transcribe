@@ -123,11 +123,35 @@ Two consequences worth knowing before editing anything:
 - **`check_decoding` now has a caller outside this repo's own `run()`.** The workflow imports it
   directly to get the format matrix without a checkpoint. Its name, signature and
   `list[Failure]` return are load-bearing for CI, not just for `verify_transcription.py`.
-- **The lint job mirrors the hooks rather than restating them.** It reads the ruff version out of
-  `required-version` exactly as `.claude/hooks/lib.sh` does, and every check runs under
-  `if: !cancelled()` so a formatting slip cannot stop `ruff check` from running — the same
-  short-circuit b06c493 removed from `gate.sh`. ruff blocks and ty is advisory there for the same
-  reasons it draws that line here.
+- **The lint job is where repo-wide ruff lives now, not a mirror of a hook that also does it.** It
+  reads the ruff version out of `required-version` exactly as `.claude/hooks/lib.sh` does, and every
+  check runs under `if: !cancelled()` so a formatting slip cannot stop `ruff check` from running —
+  the same short-circuit b06c493 removed from the `Stop` hook that has since been deleted for
+  duplicating this job. ruff blocks and ty is advisory there for the same reasons it draws that line
+  here.
+
+## Hooks
+
+`.claude/` carries three, and the rule for admitting a fourth is that the failure it catches must be
+**silent**. Everything in `guard.sh` succeeds while being wrong: a `pip install` that moves mlx-audio
+off the 0.4.7 `_patch_vad_dtype` targets, a credential read, four gigabytes downloaded before
+anything says why. A rule rejecting an unpinned `uvx ruff` was removed under that test — ruff reads
+`required-version` itself and aborts with the whole diagnosis in the error, so the hook bought one
+round trip.
+
+- **`guard.sh`** (PreToolUse) — `deny` where the operation is always wrong here, `ask` where a human
+  should decide. The reason strings are the point; they reach Claude verbatim.
+- **`edit-checks.sh`** (PostToolUse) — ruff format applied, ruff check and ty reported. It is the
+  only in-session checker. `exit 2` is advisory here and blocking on `Stop`, which is why ty sits in
+  this hook and not in a gate.
+- **`preflight.sh`** (SessionStart) — ffmpeg, Apple Silicon, HF credentials, `uv.lock`. Prints
+  nothing when all four hold, so it costs a line of output only when it has one to give.
+
+A `Stop` gate running repo-wide ruff was deleted rather than kept: ruff's rules are per-file, so a
+repo sweep found nothing `edit-checks.sh` had not already reported on the file Claude wrote, and the
+`lint` job above covers the rest on push. What it uniquely caught — a `.py` file edited through
+`sed` or a heredoc rather than Edit/Write — is real but rare, and reaches CI anyway. Half its body
+was a session-keyed loop guard defending against its own ability to trap a turn.
 
 ## Architecture
 
