@@ -81,15 +81,6 @@ jobs:
         if: ${{ !cancelled() && steps.pin.outcome == 'success' }}
         run: uvx "${RUFF}" format --check --output-format=github .
 
-      # uv.lock is the only thing pinning mlx-audio to the 0.4.7 that
-      # `_patch_vad_dtype` was written against -- pyproject.toml asks only for
-      # >=0.4.4. A lockfile that has drifted from pyproject.toml is a real defect
-      # here, not bookkeeping, so it gets its own named check rather than being
-      # buried inside a sync step in another job.
-      - name: uv.lock matches pyproject.toml
-        if: ${{ !cancelled() }}
-        run: uv lock --check
-
   test:
     # ubuntu, and this is the one job here that can be. tests/test_pure.py never
     # imports mlx_audio -- utils/ keeps those imports inside the functions that
@@ -111,9 +102,17 @@ jobs:
         with:
           enable-cache: true
 
-      # --locked for the same reason every other job uses it: uv.lock is the only
-      # thing pinning mlx-audio to the 0.4.7 that _patch_vad_dtype was written
-      # against. pytest arrives with it, from the `dev` dependency group.
+      # --locked is the lockfile check, not merely an install flag: it asserts
+      # uv.lock will remain unchanged, so a lockfile that has drifted from
+      # pyproject.toml turns this job red. `lint` carried a separate
+      # `uv lock --check` step for exactly that until it was cut -- the same
+      # assertion on the same triggers, so it could never have failed alone.
+      # It matters because uv.lock is the only thing pinning mlx-audio to the
+      # 0.4.7 that _patch_vad_dtype was written against; pyproject.toml asks
+      # only for >=0.4.4, and a drifted lockfile is a real defect here rather
+      # than bookkeeping.
+      #
+      # pytest arrives with it, from the `dev` dependency group.
       - name: uv sync
         run: uv sync --locked
 
@@ -155,9 +154,17 @@ jobs:
       # than a regression, and a ty release must not turn an unrelated pull
       # request red. ruff is the blocking checker because required-version makes
       # its verdict reproducible; ty has no equivalent setting to hold a pin.
+      #
+      # --output-format=github because continue-on-error means this step cannot
+      # change the verdict by construction: without annotations its findings
+      # landed in the log of a passing job, where nobody goes. Worth wiring up
+      # rather than deleting, because it is the only whole-project type check
+      # anywhere -- .claude/hooks/edit-checks.sh runs ty against one file at a
+      # time, so a function renamed in utils/ and its now-broken caller in
+      # streamlit_app.py meet for the first time in this step.
       - name: ty check (advisory)
         continue-on-error: true
-        run: uvx ty check .
+        run: uvx ty check --output-format=github .
 
       # Not preinstalled on the macOS runner images, and not optional: only wav,
       # mp3 and flac decode through miniaudio, so six of the nine rows in
@@ -168,21 +175,6 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: brew install ffmpeg
-
-      - name: Probe the macOS speech synthesizer
-        run: |
-          # `say` is the one prerequisite GitHub does not document for its runner
-          # images, and its absence is indistinguishable from a decoding bug once
-          # check_decoding is running -- it would surface as nine failed formats.
-          # stat rather than `wc -c`, which pads its output on BSD: the error
-          # below is the entire diagnosis, and "only     52 bytes" reads as noise.
-          say -o "${RUNNER_TEMP}/probe.aiff" "probe one two three"
-          bytes=$(stat -f%z "${RUNNER_TEMP}/probe.aiff")
-          echo "say produced ${bytes} bytes"
-          if [ "${bytes}" -lt 1000 ]; then
-            echo "::error::say produced only ${bytes} bytes; this runner image has no usable voice"
-            exit 1
-          fi
 
       # The half of verify_transcription.py that needs no checkpoint: it
       # synthesizes one source file and asserts every advertised upload format
@@ -271,10 +263,19 @@ jobs:
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: brew install ffmpeg
 
-      # Same probe as the check job, and it belongs here for the same reason it
-      # belongs there -- but it earns more: without it a voiceless image is
-      # discovered only after the ~4 GB download, as nine decode failures and
-      # three 100% word error rates that look nothing like their cause.
+      # The only copy of this probe. `check` carried one too until it was cut:
+      # there it merely reordered a failure that was going to happen thirty
+      # seconds later anyway, while here it comes before the ~4 GB download.
+      #
+      # It is not the same thing as a missing binary -- verify_transcription.py
+      # already refuses to start when `say` is absent from PATH. What it catches
+      # is a runner image where `say` runs and produces no usable voice, which
+      # GitHub does not document either way, and which surfaces as nine decode
+      # failures and three 100% word error rates that look nothing like their
+      # cause.
+      #
+      # stat rather than `wc -c`, which pads its output on BSD: the error below
+      # is the entire diagnosis, and "only     52 bytes" reads as noise.
       - name: Probe the macOS speech synthesizer
         run: |
           say -o "${RUNNER_TEMP}/probe.aiff" "probe one two three"

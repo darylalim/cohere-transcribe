@@ -103,11 +103,20 @@ construction — so it is untested on purpose rather than by oversight.
 ### CI
 
 `.github/workflows/ci.yml` adds no tests; it runs the ones already here. Four jobs: `lint` on ubuntu
-(ruff, and `uv lock --check`), `test` on ubuntu (`uv sync --locked` and pytest), `check` on macos-15
-(`uv sync --locked`, ty, and the decode matrix), and `integration`, which runs the whole script
-against real weights and is `workflow_dispatch` only — gated weights plus GitHub withholding secrets
-from fork pull requests mean it can never be a required check. It needs an `HF_TOKEN` repository
-secret; `huggingface_hub` reads that env var directly, so CI needs no `hf auth login`.
+(ruff only, and no `uv sync` — it needs none), `test` on ubuntu (`uv sync --locked` and pytest),
+`check` on macos-15 (`uv sync --locked`, ty, and the decode matrix), and `integration`, which runs the
+whole script against real weights and is `workflow_dispatch` only — gated weights plus GitHub
+withholding secrets from fork pull requests mean it can never be a required check. It needs an
+`HF_TOKEN` repository secret; `huggingface_hub` reads that env var directly, so CI needs no
+`hf auth login`.
+
+No step in it is verdict-neutral. That is the rule for adding one, and three were removed or rewired
+under it: `lint` had its own `uv lock --check`, which asserts exactly what `--locked` already asserts
+in `test` on the same triggers; `check` had a `say` probe that only reordered a failure arriving
+thirty seconds later regardless — it survives in `integration`, where it precedes a ~4 GB download;
+and ty ran without `--output-format=github`, so `continue-on-error` left its findings in the log of a
+passing job. Diagnosis is worth a step only where it beats a materially worse alternative, which is
+why the two survivors are the ones guarding a four-gigabyte wait and a truncated annotation.
 
 `test` is on ubuntu because it is the one job that can be: `tests/test_pure.py` never imports
 `mlx_audio` — `utils/` keeps those imports inside the functions that need them — so it needs no Apple
