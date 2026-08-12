@@ -5,7 +5,12 @@ description = "Streamlit application for transcription using Cohere Transcribe o
 license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
-    "streamlit>=1.57",
+    # 1.61, not 1.57: `icon=` on st.metric lands there, and the metrics row passes
+    # it. Established by resolving every `st.*` call the app makes against clean
+    # 1.57/1.58/1.59/1.60 installs, where that one argument is the only casualty.
+    # uv.lock pins 1.61.1, so a floor that undershoots is invisible to `uv sync
+    # --locked` and to CI -- it only breaks whoever resolves from this file alone.
+    "streamlit>=1.61",
     # 0.4.4 brought the faster long-form path and VAD pre-processing for Cohere ASR.
     "mlx-audio>=0.4.4",
     "numpy>=2.0",

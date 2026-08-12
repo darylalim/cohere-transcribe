@@ -325,5 +325,13 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   a skipped row reads as a passing one. `preview_mime` falls back to `"audio/wav"` instead of raising,
   so a missing row there degrades silently into the exact bug it exists to prevent; `test_pure.py`
   asserts the two lists stay in step, in both directions.
-- The UI uses Streamlit ≥1.57 APIs deliberately (`st.segmented_control`, `st.container(horizontal=…)`,
-  `width="stretch"`, `icon=` on metrics and expanders). Don't substitute older equivalents.
+- The UI uses recent Streamlit APIs deliberately (`st.segmented_control`, `st.container(horizontal=…)`,
+  `width="stretch"`, `icon=` on metrics and expanders, `on_click="ignore"` on download buttons,
+  `on_change="rerun"` plus `.open` on the chunk expander). Don't substitute older equivalents. The
+  floor in `pyproject.toml` is a checked claim rather than an assumed one: every `st.*` call the app
+  makes was resolved against clean 1.57 through 1.61 installs, and `icon=` on `st.metric` is the one
+  that moves it — it does not exist before **1.61**, while everything else here, `.open` gating
+  included, resolves as far back as 1.57. The floor read `>=1.57` for exactly that reason before
+  anyone checked: `uv.lock` pins 1.61.1, so `uv sync --locked` and all of CI install a version that
+  satisfies any floor, and an undershooting one breaks only whoever resolves from `pyproject.toml`
+  alone. Re-check it the same way when adding an API, rather than inferring it from a changelog.
