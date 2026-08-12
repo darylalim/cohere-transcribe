@@ -1,3 +1,4 @@
+import hashlib
 import time
 
 import streamlit as st
@@ -11,6 +12,7 @@ from utils.audio import (
     UPLOAD_TYPES,
     decode_to_mono16k,
     format_duration,
+    preview_mime,
     to_srt,
     to_vtt,
 )
@@ -100,18 +102,67 @@ if mode == "Record":
 else:
     audio_file = st.file_uploader("Audio file", type=UPLOAD_TYPES)
     if audio_file is not None:
-        st.audio(audio_file)
+        # format= is not inferred: st.audio defaults it to "audio/wav" and hands
+        # it straight to the media file manager, which serves the bytes under
+        # that Content-Type. Eight of the nine UPLOAD_TYPES are not WAV, and
+        # browsers that pick a decoder from the header rather than sniffing the
+        # container play none of them — silently, since the file still
+        # transcribes fine while only the preview player looks broken. Derived
+        # from the extension rather than read off UploadedFile.type; see
+        # preview_mime for why that attribute cannot do the job.
+        st.audio(audio_file, format=preview_mime(audio_file.name))
 
-source_key = getattr(audio_file, "file_id", None) or getattr(audio_file, "name", None)
+
+def source_key(file) -> str:
+    """Identify the audio by its bytes, not by the upload event.
+
+    Streamlit mints a fresh uuid4 ``file_id`` per upload, so re-dropping the very
+    file that produced the transcript on screen read as a new source and
+    discarded it. Both inputs reach that: clearing the uploader keeps the
+    transcript but takes the player away, and switching to Record unmounts the
+    uploader and lets its widget state be pruned, so a re-upload is the only way
+    back to either.
+
+    Behind a call rather than computed inline, because the digest is wanted only
+    twice -- to compare against a transcript that already exists, and to label a
+    new one -- and neither holds on the first upload of a session, which is every
+    session. Hashing a gigabyte the moment a file lands, to protect a transcript
+    that is not there, is dead time before the user has clicked anything.
+
+    ``getvalue()``, not ``getbuffer()``: ``UploadedFile`` is a ``BytesIO`` built
+    around the upload record's bytes, so ``getvalue()`` hands back that very
+    object under CPython's copy-on-write rule while ``getbuffer()`` has to
+    unshare the buffer and memcpy it. Measured on a 300 MB payload: +0 MB RSS
+    against +300 MB, same digest. At the 1000 MB ceiling
+    ``.streamlit/config.toml`` allows, the wrong one is a spare gigabyte.
+
+    Cached against ``file_id`` as a pair rather than a dict, so there is no
+    eviction step whose necessity lives in a comment.
+    """
+    if file is None:
+        return ""
+    cached_id, digest = st.session_state.get("digest", (None, ""))
+    if cached_id != file.file_id:
+        digest = hashlib.blake2b(file.getvalue(), digest_size=16).hexdigest()
+        st.session_state.digest = (file.file_id, digest)
+    return digest
+
 
 # Drop a stale transcript as soon as the source changes, so the text on screen
 # always belongs to the audio on screen. Only when there *is* a new source:
 # switching to Record, or clearing the uploader, empties the widget without
 # invalidating what was already transcribed, and throwing away a long
 # transcription there is unrecoverable.
-if result and source_key is not None and result.source_key != str(source_key):
-    result = None
-    st.session_state.result = None
+if result and audio_file is not None:
+    if result.source_key != source_key(audio_file):
+        result = None
+        st.session_state.result = None
+    else:
+        # Same bytes under a different filename -- a copy, a rename, a download
+        # of one's own upload. The transcript is still the right one, but the
+        # caption and the download stems are built from source_name, which would
+        # otherwise keep naming a file the player is no longer showing.
+        result.source_name = audio_file.name
 
 run = st.button(
     "Transcribe",
@@ -162,9 +213,17 @@ if run and audio_file is not None:
             st.error(f"{type(exc).__name__}: {exc}", icon=":material/error:")
         else:
             result = Transcript(
-                source_key=str(source_key),
+                source_key=source_key(audio_file),
                 source_name=getattr(audio_file, "name", "recording"),
-                text=output.text,
+                # Stripped once, here, rather than left to the renderer: st.text
+                # runs its body through textwrap.dedent().strip(), and decoders
+                # in this family routinely emit a leading space, so an unstripped
+                # string would show trimmed on screen while the Text download
+                # wrote the original — the very mismatch st.text was chosen to
+                # remove. Only the ends are at stake: join_chunk_texts joins
+                # chunks with a single space and emits no newlines, so there is
+                # no common indent for dedent to find.
+                text=output.text.strip(),
                 segments=output.segments or [],
                 language=language,
                 duration_s=duration_s,
@@ -207,7 +266,20 @@ if result:
             )
 
         with st.container(border=True):
-            st.markdown(result.text or "_No speech detected._")
+            # st.text, not st.markdown: this is uncontrolled model output and the
+            # product is a verbatim transcript. Markdown eats what the decoder
+            # emits — a hallucinated `*music*` renders italic with the asterisks
+            # gone, a leading "- " becomes a bullet, "$5-$10" renders as math —
+            # while the Text download below writes the unparsed string, so the
+            # file and the screen stop being the same characters. st.text is not
+            # monospace (that is st.code), so nothing about the look changes, and
+            # its own dedent().strip() is a no-op because Transcript already
+            # holds the stripped string — which is also what keeps a
+            # whitespace-only result falsy here and on the download button.
+            if result.text:
+                st.text(result.text, width="stretch")
+            else:
+                st.markdown("_No speech detected._")
             st.caption(f"{LANGUAGES[result.language]} · {result.source_name}")
 
         # Built once here rather than inline in the buttons, which re-serialised
@@ -216,11 +288,22 @@ if result:
         vtt = to_vtt(result.segments) if result.segments else ""
 
         with st.container(horizontal=True):
+            # on_click="ignore" keeps these frontend-only. Every payload comes
+            # from st.session_state.result, so the default "rerun" re-executes
+            # the whole script to arrive at an identical screen — rebuilding srt
+            # and vtt above, re-marshalling all three payloads (which happens
+            # before `disabled` is applied, so the greyed-out ones pay too) and
+            # re-serialising the chunk table. It is the one interaction here that
+            # cannot change a pixel.
             st.download_button(
                 "Text",
                 result.text,
                 file_name=f"{result.stem}.txt",
                 icon=":material/description:",
+                # Same rule as SRT/VTT: a no-speech result still has segments, so
+                # without this the one button left lit hands over an empty file.
+                disabled=not result.text,
+                on_click="ignore",
             )
             st.download_button(
                 "SRT",
@@ -228,6 +311,7 @@ if result:
                 file_name=f"{result.stem}.srt",
                 icon=":material/subtitles:",
                 disabled=not srt,
+                on_click="ignore",
             )
             st.download_button(
                 "VTT",
@@ -235,25 +319,45 @@ if result:
                 file_name=f"{result.stem}.vtt",
                 icon=":material/subtitles:",
                 disabled=not vtt,
+                on_click="ignore",
             )
 
         if len(result.segments) > 1:
+            # on_change="rerun" is what makes `.open` mean anything; the default
+            # computes and ships expander contents whether or not it is open. VAD
+            # splits per speech run rather than per 35-second window, so a long
+            # meeting is thousands of rows Arrow-serialised on every rerun for a
+            # section nobody expanded.
+            #
+            # Only above a threshold, though, because the saving is not free: with
+            # on_change="rerun" every open and close becomes a full script rerun,
+            # the same cost on_click="ignore" removes from the buttons above. A 90
+            # second clip is ~3 chunks, where a rerun per toggle buys nothing. 100
+            # rows is roughly an hour of long-form chunking, past which the table
+            # stops being incidental and the trade inverts.
+            lazy = len(result.segments) > 100
             segments = st.expander(
-                f"{len(result.segments)} chunks", icon=":material/segment:"
+                f"{len(result.segments)} chunks",
+                icon=":material/segment:",
+                on_change="rerun" if lazy else "ignore",
             )
-            with segments:
-                st.caption(
-                    "Chunk boundaries from long-form splitting, not word-level "
-                    "alignment. The model does not produce timestamps or speaker labels."
-                )
-                st.dataframe(
-                    result.segments,
-                    hide_index=True,
-                    key="segments",
-                    column_order=["start", "end", "text"],
-                    column_config={
-                        "start": st.column_config.NumberColumn("Start", format="%.1fs"),
-                        "end": st.column_config.NumberColumn("End", format="%.1fs"),
-                        "text": st.column_config.TextColumn("Text", width="large"),
-                    },
-                )
+            if segments.open or not lazy:
+                with segments:
+                    st.caption(
+                        "Chunk boundaries from long-form splitting, not word-level "
+                        "alignment. The model does not produce timestamps or speaker "
+                        "labels."
+                    )
+                    st.dataframe(
+                        result.segments,
+                        hide_index=True,
+                        key="segments",
+                        column_order=["start", "end", "text"],
+                        column_config={
+                            "start": st.column_config.NumberColumn(
+                                "Start", format="%.1fs"
+                            ),
+                            "end": st.column_config.NumberColumn("End", format="%.1fs"),
+                            "text": st.column_config.TextColumn("Text", width="large"),
+                        },
+                    )

@@ -15,6 +15,39 @@ SAMPLE_RATE = 16_000
 # through mlx-audio itself or through the fallback below.
 UPLOAD_TYPES = ["wav", "mp3", "flac", "aiff", "m4a", "aac", "ogg", "opus", "webm"]
 
+# What st.audio should advertise for each row above, so the preview player gets a
+# Content-Type its decoder recognises. Keyed by extension because that is the
+# part the uploader has already validated. `UploadedFile.type` cannot do this
+# job: it is whatever the browser wrote into the multipart part, empty for .opus
+# on most systems and for .m4a/.aac wherever the OS carries no mapping, and
+# Streamlit stores an empty one as "application/octet-stream" rather than "" --
+# so it is never falsy, an `or` fallback never fires, and the bytes get served as
+# octet-stream at a .bin URL that strict media stacks decline to play. Deriving
+# it here also keeps a browser-supplied string out of a Content-Type served from
+# the app's own origin, which the media route sends without `nosniff`.
+PREVIEW_MIME = {
+    "wav": "audio/wav",
+    "mp3": "audio/mpeg",
+    "flac": "audio/flac",
+    "aiff": "audio/x-aiff",
+    "m4a": "audio/mp4",
+    "aac": "audio/aac",
+    "ogg": "audio/ogg",
+    "opus": "audio/ogg",  # .opus is Opus in an Ogg container
+    "webm": "audio/webm",
+}
+
+
+def preview_mime(filename: str) -> str:
+    """MIME type for the st.audio preview, from a validated filename extension.
+
+    Falls back to the old constant rather than raising: a miss means
+    ``UPLOAD_TYPES`` and ``PREVIEW_MIME`` have drifted apart, and degrading to
+    the previous behaviour beats taking the page down before the file has even
+    been transcribed. ``test_pure.py`` asserts the two stay in step.
+    """
+    return PREVIEW_MIME.get(filename.rsplit(".", 1)[-1].lower(), "audio/wav")
+
 
 def _decode_with_ffmpeg(data: bytes) -> np.ndarray:
     """Decode audio mlx-audio could not handle, to mono 16 kHz float32.

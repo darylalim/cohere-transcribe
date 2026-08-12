@@ -186,7 +186,9 @@ tests/test_pure.py         unit tests for the pure functions, and for the test o
 Flow: `UploadedFile` (or `st.audio_input`) → `decode_to_mono16k` → flat `np.float32` array at 16 kHz +
 duration → `load_asr(repo_id)` (cached, one model resident) → `model.generate(...)` → mlx-audio
 `STTOutput` → `Transcript` dataclass parked in `st.session_state.result` → metrics, text, SRT/VTT
-downloads, chunk table.
+downloads, chunk table. Session state holds one other key: `digest`, a `(file_id, digest)` pair for the
+upload on screen, which is what decides whether a new upload invalidates `result` — see the
+load-bearing decisions below.
 
 Everything downstream of decoding assumes mono float32 at `audio.SAMPLE_RATE`; note that
 `streamlit_app.py` passes `sample_rate=16_000` as a literal to `generate`, so changing `SAMPLE_RATE`
@@ -238,14 +240,69 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   call) and below `warnings.filterwarnings` in `verify_transcription.py`. E402 is not in ruff's default
   rule set *and* `[tool.ruff.lint] extend-ignore` names it explicitly, so this passes lint — do not
   reorder.
-- **Session state is invalidated only when a new source exists.** Clearing the uploader or switching to
-  Record must not discard a finished transcript; that can be minutes of unrecoverable work.
+- **`st.audio` is passed an explicit `format=`, derived from the extension by `preview_mime`.** It
+  defaults to `"audio/wav"` and nothing sniffs the container, so the bytes are served under that
+  Content-Type. Eight of the nine `UPLOAD_TYPES` are not WAV, and browsers that pick a decoder from
+  the header rather than the magic bytes play none of them — silently, since the file still
+  transcribes fine and only the preview player looks broken. `UploadedFile.type` looks like the
+  obvious source and is not: it is whatever the browser wrote into the multipart part, which is empty
+  for `.opus` on most systems, and Streamlit stores an empty one as `"application/octet-stream"` —
+  never falsy, so an `or "audio/wav"` fallback never fires and the player stays broken at a `.bin`
+  URL. The extension is the part the uploader has already validated, and keying off it also keeps a
+  browser-supplied string out of a Content-Type served from the app's own origin, which the media
+  route sends without `nosniff`.
+- **Session state is invalidated only when a new source exists, and "same source" means the same
+  bytes.** Clearing the uploader or switching to Record must not discard a finished transcript; that
+  can be minutes of unrecoverable work. Identity is a `blake2b` digest of the upload rather than
+  `UploadedFile.file_id`, because Streamlit mints a fresh uuid4 per upload *event* — so re-dropping
+  the very file that produced the transcript on screen read as a new source and threw it away. Both
+  inputs reach that: clearing the uploader keeps the transcript but takes the player away, and
+  switching to Record unmounts the uploader and lets its widget state be pruned, leaving a re-upload
+  as the only way back to either. `getvalue()`, not `getbuffer()`: `UploadedFile` is a `BytesIO` built
+  around the upload record's bytes, so `getvalue()` returns that object under CPython's copy-on-write
+  rule while `getbuffer()` must unshare the buffer and memcpy it — measured +0 MB against +300 MB of
+  RSS on a 300 MB payload, which at the 1000 MB ceiling is a spare gigabyte. It sits behind
+  `source_key()` rather than inline because the digest is wanted only twice — to compare against a
+  transcript that already exists, and to label a new one — and neither holds on the first upload of a
+  session, which is every session; hashing a gigabyte to protect a transcript that is not there is
+  dead time before the user has clicked anything. Cached as a pair, not a one-entry dict, so no
+  eviction step carries its own necessity in a comment. When the digest *matches*, `source_name` is
+  refreshed from the current upload: same bytes under a new filename is a copy or a rename, and the
+  caption and download stems are built from that field, which would otherwise keep naming a file the
+  player is no longer showing.
 - **The status label reports total wall clock, the Elapsed metric reports generation only.** RTFx needs
   generation time; the status would otherwise read "Done in 2.1s" after a multi-minute first-run
-  download.
+  download. Note that the status block is written under `if run and ...`, so it is absent from every
+  rerun that did not press Transcribe — that is why the metrics below render from `result` instead.
+- **The transcript renders through `st.text`, not `st.markdown`.** It is uncontrolled model output and
+  the product is a verbatim transcript: a hallucinated `*music*` renders italic with the asterisks
+  gone, a leading `- ` becomes a bullet, `$5-$10` renders as math — while the Text download hands over
+  the unparsed string, so the file and the screen stop being the same characters. `st.text` is not
+  monospace (that is `st.code`), so nothing about the look changes. The `_No speech detected._`
+  placeholder stays on `st.markdown`, since that string *is* ours to format. `Transcript` holds
+  `output.text.strip()` rather than the raw string, because `st.text` runs its body through
+  `textwrap.dedent().strip()` — leave that to the renderer and a decoder's leading space shows trimmed
+  on screen while the Text download writes it, which is the same mismatch one layer down. Stripping at
+  construction is also what keeps a whitespace-only result falsy, so it takes the no-speech branch
+  instead of rendering an empty box beside a live download button.
 - **`_cues()` filters on `start`/`end`/`text` before the SRT/VTT writers index them** — a malformed
   segment would otherwise raise while rendering an already-successful result, taking the transcript
   off screen.
+- **The three download buttons carry `on_click="ignore"`, and Text is disabled on empty text.** Every
+  payload comes from `st.session_state.result`, so the default `"rerun"` re-executes the whole script
+  to arrive at an identical screen — rebuilding `srt`/`vtt`, re-marshalling all three payloads (which
+  happens before `disabled` is applied to the proto, so the greyed-out ones pay too) and
+  re-serialising the chunk table. It is the one interaction here that cannot change a pixel.
+  `disabled=not result.text` matches the rule SRT and VTT already follow: a no-speech result still has
+  segments, so without it the one button left lit hands over an empty file.
+- **The chunk expander goes lazy only past 100 rows.** `st.expander` computes and ships its contents
+  whether or not it is open, and `.open` means nothing until `on_change` is set — so above the
+  threshold it sets `on_change="rerun"` and gates its body on `segments.open`, and that guard wrapping
+  a `with segments:` block looks redundant and is not. The threshold is the point of the decision, not
+  a tuning knob: `on_change="rerun"` turns every open and close into a full script rerun, the same
+  cost `on_click="ignore"` removes from the buttons just above, so on a 90-second clip's ~3 chunks the
+  lazy path costs more than the Arrow serialisation it avoids. 100 rows is roughly an hour of
+  long-form chunking; past it VAD's per-speech-run splitting reaches thousands and the trade inverts.
 - **`st.cache_resource(max_entries=1)`** keeps exactly one multi-gigabyte model resident, so pointing
   the app at another repo evicts rather than accumulates.
 
@@ -263,8 +320,10 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
 
 - Comments explain *why*, and usually name the failure that motivated the code. Match that register;
   drop a comment only if the failure it describes is genuinely gone.
-- Adding an upload format means a row in `UPLOAD_TYPES` and a passing row in `check_decoding` — that
-  loop reports a missing format as a failure rather than skipping it, because a skipped row reads as a
-  passing one.
+- Adding an upload format means a row in `UPLOAD_TYPES`, a row in `PREVIEW_MIME`, and a passing row in
+  `check_decoding` — that loop reports a missing format as a failure rather than skipping it, because
+  a skipped row reads as a passing one. `preview_mime` falls back to `"audio/wav"` instead of raising,
+  so a missing row there degrades silently into the exact bug it exists to prevent; `test_pure.py`
+  asserts the two lists stay in step, in both directions.
 - The UI uses Streamlit ≥1.57 APIs deliberately (`st.segmented_control`, `st.container(horizontal=…)`,
   `width="stretch"`, `icon=` on metrics and expanders). Don't substitute older equivalents.

@@ -30,9 +30,12 @@ import numpy as np
 import pytest
 
 from utils.audio import (
+    PREVIEW_MIME,
+    UPLOAD_TYPES,
     _cues,
     _timestamp,
     format_duration,
+    preview_mime,
     to_srt,
     to_vtt,
 )
@@ -442,3 +445,36 @@ def test_speedup_does_not_divide_by_zero():
 )
 def test_stem(source_name, expected):
     assert _transcript(source_name=source_name).stem == expected
+
+
+# --- Preview MIME ---------------------------------------------------------
+# preview_mime falls back to "audio/wav" rather than raising, because a miss
+# would otherwise take the page down before the file had even been transcribed.
+# That makes drift silent, which is what these two catch.
+
+
+def test_every_upload_type_has_a_preview_mime():
+    """The fallback degrades a missing row to the bug it was written to fix --
+    a container advertised as WAV -- so nothing at runtime reports the gap."""
+    assert sorted(PREVIEW_MIME) == sorted(UPLOAD_TYPES)
+
+
+def test_no_preview_mime_without_an_upload_type():
+    """The other direction: a row here for a format the uploader rejects is
+    dead weight that reads as support."""
+    assert set(PREVIEW_MIME) <= set(UPLOAD_TYPES)
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        ("meeting.m4a", "audio/mp4"),
+        ("MEETING.M4A", "audio/mp4"),  # browsers preserve case, the map does not
+        ("a.b.c.opus", "audio/ogg"),  # rsplit, so only the extension decides
+        ("clip.wav", "audio/wav"),
+        ("mystery.xyz", "audio/wav"),  # unreachable past the uploader; degrades
+        ("recording", "audio/wav"),  # st.audio_input supplies no extension
+    ],
+)
+def test_preview_mime(filename, expected):
+    assert preview_mime(filename) == expected
