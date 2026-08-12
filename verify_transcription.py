@@ -30,14 +30,21 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
+import numpy as np
+
 from utils.audio import UPLOAD_TYPES, decode_to_mono16k, to_srt, to_vtt
-from utils.models import DEFAULT_REPO, load_asr
+from utils.models import DEFAULT_REPO, VAD_REPO, load_asr
 
 # Named rather than inlined at the comparisons so tests/test_pure.py can import
 # the actual numbers. Re-typing them there would have let a loosened threshold
 # here pass a test written specifically to catch a loosened threshold.
 MAX_WER = 0.15
 MAX_NON_ASCII = 0.05
+
+# Silence padded onto each end of the fixture in check_vad_backend. Long enough
+# that trimming it is unmistakable at the 256 ms resolution runs come back at,
+# short enough that the extra `say` render stays free.
+VAD_PAD_S = 1.5
 
 SHORT_TEXT = (
     "The quick brown fox jumps over the lazy dog while the ambitious "
@@ -206,6 +213,72 @@ def check_decoding(tmp: pathlib.Path) -> list[Failure]:
     return failures
 
 
+def check_vad_backend(model, tmp: pathlib.Path) -> list[Failure]:
+    """The pinned backend must be the one detecting speech, and must work.
+
+    Identity is the easy half: mlx-audio reads `_vad_backend` off a private
+    attribute, so if the pin stopped landing, the run above would have passed on
+    the v5 default just as happily.
+
+    The other half needs an oracle, for the same reason the rest of this file
+    does. `mlx_audio.vad.load` is `strict=False`, so a checkpoint whose keys
+    stop matching the module names loads into a fully constructed, randomly
+    initialised model: `_model is not None`, `repo_id` intact, every WER
+    assertion still green. A random detector calls the whole waveform speech,
+    and `_segment_with_vad` also hands back the whole waveform when it finds no
+    speech at all, so either way the transcript is the one the non-VAD path
+    already produced. Measured on this fixture: the real backend returns nothing
+    on five seconds of silence, a random one returns 4.9 seconds of it.
+
+    So ask the question silence answers. Padding is not trimmed to the sample --
+    runs land on 256 ms blocks and carry a 30 ms speech pad -- hence a third of
+    it as the margin, against the whole of it that a random backend keeps.
+    """
+    backend = getattr(model, "_vad_backend", None)
+    repo = getattr(backend, "repo_id", None)
+    # Read before the probe below, which loads the backend either way.
+    consulted = getattr(backend, "_model", None) is not None
+    print(f"\nvad backend {repo}")
+    if backend is None or repo != VAD_REPO or not consulted:
+        return [
+            Failure(
+                f"vad: {VAD_REPO} is pinned but did not detect the speech above "
+                f"(repo_id={repo!r}, weights loaded={consulted}) -- _pin_vad_repo "
+                "no longer reaches mlx-audio"
+            )
+        ]
+
+    path = tmp / "vad-padded.aiff"
+    synthesize(SHORT_TEXT, path)
+    speech, _ = decode_to_mono16k(_Upload(path))
+    padding = np.zeros(int(VAD_PAD_S * 16_000), dtype=np.float32)
+    padded = np.concatenate([padding, speech, padding])
+    total_s = len(padded) / 16_000
+
+    runs = [
+        (run.start_sample / 16_000, run.end_sample / 16_000)
+        for run in backend.detect_speech(padded)
+    ]
+    print(
+        f"vad on {total_s:.1f}s ({VAD_PAD_S}s silence each end)   "
+        + ("  ".join(f"{start:.1f}-{end:.1f}s" for start, end in runs) or "nothing")
+    )
+
+    if not runs:
+        return [Failure("vad: the pinned backend heard no speech in the fixture")]
+    margin = VAD_PAD_S / 3
+    if runs[0][0] < margin or runs[-1][1] > total_s - margin:
+        return [
+            Failure(
+                f"vad: {VAD_REPO} kept the silence it was supposed to trim "
+                f"({runs[0][0]:.1f}-{runs[-1][1]:.1f}s of {total_s:.1f}s, with "
+                f"{VAD_PAD_S}s of silence at each end) -- weights this far off "
+                "are what strict=False leaves behind when the keys stop matching"
+            )
+        ]
+    return []
+
+
 def run(tmp: pathlib.Path) -> int:
     for binary in ("say", "ffmpeg"):
         if shutil.which(binary) is None:
@@ -254,6 +327,11 @@ def run(tmp: pathlib.Path) -> int:
         failures.append(exc)
     except Exception as exc:  # noqa: BLE001 - the shim regressing looks like this
         failures.append(Failure(f"vad: {type(exc).__name__}: {exc}"))
+
+    # Outside that try on purpose. A VAD run that regresses is precisely when
+    # "which backend detected the speech, and does it work" wants answering, and
+    # raising above would have skipped the one check that answers it.
+    failures.extend(check_vad_backend(model, tmp))
 
     print("\n" + "=" * 60)
     if failures:

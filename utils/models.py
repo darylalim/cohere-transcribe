@@ -15,6 +15,12 @@ import streamlit as st
 # `transf_decoder.decoder.*`, `encoder_decoder_proj.*`). See load_asr below.
 DEFAULT_REPO = "CohereLabs/cohere-transcribe-03-2026"
 
+# The checkpoint the `vad=True` path detects speech with. mlx-audio defaults to
+# `mlx-community/silero-vad`, the v5 port; this is the current Silero release
+# line. See _pin_vad_repo below for why it takes a patch to get there, and why
+# nothing but a 16 kHz caller may use it.
+VAD_REPO = "mlx-community/silero-vad-v6"
+
 # The 14 languages the model was trained on. It has no language detection, so
 # one of these has to be picked explicitly for every transcription.
 LANGUAGES: dict[str, str] = {
@@ -103,6 +109,43 @@ def _cap_segment_length(
     return capped_segments, capped_meta
 
 
+def _pin_vad_repo(model, selector) -> None:
+    """Detect speech with ``VAD_REPO`` instead of mlx-audio's v5 default.
+
+    Seeding the cache is the whole patch. ``_segment_with_vad`` builds its
+    backend once per model and keeps it on the instance, so setting
+    ``_vad_backend`` first is enough to stop it -- and it is the only opening
+    there is, since ``get_backend`` hardcodes ``DEFAULT_SILERO_REPO`` and
+    ``generate`` exposes nothing that reaches a repo id.
+
+    Built *through* ``get_backend`` rather than by constructing the backend
+    class, so an unknown ``vad=`` selector still raises there rather than
+    quietly getting Silero anyway. ``repo_id`` is read in ``_load``, on the
+    first ``detect_speech``, so overwriting it here is in time.
+
+    Called from the shim rather than from ``load_asr`` so a rename upstream
+    takes the VAD path down with it instead of every transcription: someone
+    running with VAD switched off has no reason to pay for this import.
+
+    The v6 checkpoint ships the 16 kHz branch only, and ``mlx_audio.vad.load``
+    is ``strict=False``, so ``Model.vad_8k`` comes back randomly initialised --
+    the same failure ``load_asr`` refuses below, defused here by the fact that
+    ``SileroMlxBackend`` fixes ``sample_rate`` at 16000 and ``_branch()`` never
+    returns the 8 kHz one. Do not reuse ``VAD_REPO`` where 8 kHz audio reaches
+    a detector.
+    """
+    from mlx_audio.stt.models.cohere_asr.vad import get_backend
+
+    # Idempotent: this runs on every vad=True call, and rebuilding would throw
+    # away weights the backend loaded on the last one.
+    if getattr(getattr(model, "_vad_backend", None), "repo_id", None) == VAD_REPO:
+        return
+
+    backend = get_backend(selector)
+    backend.repo_id = VAD_REPO  # ty: ignore[unresolved-attribute]
+    model._vad_backend = backend
+
+
 def _patch_vad_dtype() -> None:
     """Work around the VAD path in mlx-audio 0.4.7, which assumes numpy.
 
@@ -115,19 +158,25 @@ def _patch_vad_dtype() -> None:
 
     Coerce once at that boundary rather than patching each call inside, so a
     third numpy assumption in the same function cannot resurface. Safe to delete
-    once fixed upstream.
+    once fixed upstream — but the wrapper is also where ``_pin_vad_repo`` and
+    ``_cap_segment_length`` hang, and neither of those is part of the bug, so
+    keep the wrapper and drop the coercion.
     """
     from mlx_audio.stt.models.cohere_asr.cohere_asr import Model
 
     # _segment_with_vad is private and pyproject allows any mlx-audio >= 0.4.4,
     # including the release that fixes this. Bail out quietly if it is gone
     # rather than failing every load — this runs even when VAD is switched off.
+    # Bailing takes the repo pin down with it, which is the right coupling: the
+    # `_vad_backend` cache the pin writes is read by this method and nowhere
+    # else, so if the method is gone there is nothing left to pin.
     original = getattr(Model, "_segment_with_vad", None)
     if original is None or getattr(original, "_coerces_numpy", False):
         return
 
     @functools.wraps(original)
     def _segment_with_vad(self, waveform, *args, **kwargs):
+        _pin_vad_repo(self, kwargs.get("backend_selector", True))
         segments, meta = original(
             self, np.asarray(waveform, dtype=np.float32), *args, **kwargs
         )

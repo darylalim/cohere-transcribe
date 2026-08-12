@@ -4,8 +4,9 @@
 
 Streamlit app for local speech to text on Apple Silicon. Audio never leaves the
 machine: the model runs on the GPU through MLX and
-[mlx-audio](https://github.com/Blaizzy/mlx-audio), and the only network call is
-the one-time weight download.
+[mlx-audio](https://github.com/Blaizzy/mlx-audio), and the only network calls
+are the one-time weight downloads — the checkpoint, plus 1.2 MB of Silero the
+first time VAD is switched on.
 
 Upload a file or record from the mic, pick one of 14 languages, and get the text
 back with SRT and VTT exports. Toggles control punctuation and casing, and
@@ -66,7 +67,9 @@ It synthesizes speech with macOS `say`, so the reference text is exact, then
 checks the transcript against it. That reaches what the unit tests structurally
 cannot: every advertised upload format decoding to real samples, long-form
 splitting past the 35-second window, SRT/VTT export from real segments, and the
-VAD path. Current results on an M-series Mac:
+VAD path — down to whether the pinned Silero checkpoint trims padded silence or
+passes it straight through, which no WER threshold can see. Current results on
+an M-series Mac:
 
 | Check | WER | Segments | RTFx |
 | --- | --- | --- | --- |
@@ -135,6 +138,20 @@ the `mx.array` from `_to_mono`. It fails twice: `.astype(np.float32)` inside the
 Silero backend, then `waveform[a:b].copy()` when slicing runs out. MLX arrays
 have neither method. `utils/models._patch_vad_dtype` coerces once at that
 boundary. Delete it once mlx-audio ships a fix.
+
+**mlx-audio's VAD repo is fixed at the v5 Silero port.** `get_backend()` in
+`cohere_asr/vad.py` hardcodes `mlx-community/silero-vad`, and `generate` takes
+no argument that reaches it. `utils/models._pin_vad_repo` seeds that per-model
+backend cache with
+[`mlx-community/silero-vad-v6`](https://huggingface.co/mlx-community/silero-vad-v6),
+the current Silero release line, from inside the VAD shim and so only when VAD
+is actually used — an upstream rename can take down that path but not every
+transcription. This
+tracks upstream rather than buying accuracy — the v6 model card measures the two
+within 0.4% F1 of each other on a 44-minute English meeting, v5 marginally
+ahead, which is inside the noise of a single sample. v6 ships the 16 kHz branch
+only; that is all this app can reach, since the backend fixes its sample rate at
+16 kHz.
 
 **mlx-audio cannot identify AIFF or raw AAC.** Its format sniffer matches magic
 bytes and has no branch for `FORM`/`AIFC` or ADTS `0xFFF1`, so both raise before

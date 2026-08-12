@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A single-page Streamlit app that runs [Cohere Transcribe 03-2026](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026)
 — a 2B-parameter ASR model — locally on Apple Silicon through `mlx-audio`. Audio never leaves the
-machine; the only network call is the Hugging Face weight download. Five Python files, no framework
+machine; the only network calls are Hugging Face weight downloads — the checkpoint, plus 1.2 MB of
+Silero the first time VAD is switched on. Five Python files, no framework
 beyond Streamlit.
 
 ## Commands
@@ -62,6 +63,16 @@ It is the *only* thing that can catch the bug it was written for — a decoder l
 initialised at load returns a confident, non-empty, correctly-typed string, so nothing short of a
 comparison against text we authored ourselves distinguishes a working checkpoint from a broken one.
 No unit test can replace it and none should try.
+
+`check_vad_backend` is that same argument one level down, and it is why WER cannot be its oracle.
+`mlx_audio.vad.load` is `strict=False`, so a VAD checkpoint whose keys stop matching the module names
+loads into a randomly initialised model that calls the whole waveform speech — and since
+`_segment_with_vad` *also* returns the whole waveform when it finds no speech, the transcript is the
+one the non-VAD path already produced either way, leaving every WER and non-ASCII assertion green.
+Measured: the real backend returns nothing on five seconds of silence, a random one returns 4.9 of
+them. So the check pads the fixture with silence and asserts it gets trimmed, on top of asserting
+`repo_id` and that the backend was consulted at all. It runs outside the `try` around the VAD
+transcription, since a regression there is exactly when its answer is wanted.
 
 **`tests/test_pure.py` — unit tests, no model.** Runs in under a second, on any platform `uv sync`
 supports (Apple Silicon or Linux — mlx publishes no Intel-macOS wheel). Its core is the three things
@@ -203,6 +214,19 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   detects no speech it returns the whole waveform as one chunk and the 35-second window never applies,
   so an hour of room tone would reach the encoder as a single ~57M-sample array. Keep the capping even
   if the numpy coercion becomes unnecessary.
+- **`_pin_vad_repo` points VAD at `VAD_REPO` by writing a private attribute.** Seeding
+  `model._vad_backend` is the only opening: `_segment_with_vad` builds the backend once per instance
+  through `get_backend()`, which hardcodes `mlx-community/silero-vad` (the v5 port) and takes no repo,
+  and `generate` exposes nothing that reaches it. Three constraints shape it. It runs from inside the
+  `_patch_vad_dtype` wrapper rather than from `load_asr`, so its private import can only take down the
+  VAD path — at load time an upstream rename would have broken every transcription, including for
+  people who never switch VAD on. It goes *through* `get_backend` instead of constructing
+  `SileroMlxBackend`, so an unknown `vad=` selector still raises there. And it is idempotent on
+  `repo_id`, because the wrapper runs on every call and rebuilding would discard weights the backend
+  already loaded. v6 ships no 8 kHz branch and `mlx_audio.vad.load` is `strict=False`, so
+  `Model.vad_8k` loads randomly initialised — the exact failure `load_asr` refuses next door, inert
+  here only because `SileroMlxBackend` fixes `sample_rate` at 16000 and `_branch()` never returns the
+  8 kHz one. Do not reuse `VAD_REPO` where 8 kHz audio can reach a detector.
 - **The ffmpeg fallback writes a real temp file and requests raw `s16le`.** Never pipe, in either
   direction: on stdin ffmpeg cannot seek, so an MP4 whose `moov` index sits at the end — the normal
   layout — decodes to nothing and exits 0; on stdout it cannot backfill the RIFF size field. Both
