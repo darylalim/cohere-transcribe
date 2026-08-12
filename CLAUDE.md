@@ -39,7 +39,7 @@ rule set — the version is what decides which rules exist, and this project has
 
 ty is deliberately *not* pinned the same way: it is pre-1.0 and ships near-daily, so a pin would go
 stale within weeks, and it has no `required-version` setting to hold one anyway. Clean as of ty
-0.0.69. A new release surfacing new diagnostics is expected rather than a regression. The two
+0.0.70. A new release surfacing new diagnostics is expected rather than a regression. The three
 `ty: ignore` directives in `utils/models.py` need no policing — `unused-ignore-comment` is on by
 default, so ty reports them itself once its inference no longer needs them. Note also that ty checks
 against **Python 3.10**, inferred from `requires-python`, not the 3.12 in `.python-version`: that is
@@ -181,6 +181,7 @@ utils/audio.py             decode to mono 16 kHz float32; SRT/VTT formatting
 utils/models.py            checkpoint registry, language table, cached loader, mlx-audio VAD shim
 verify_transcription.py    integration test against known ground truth
 tests/test_pure.py         unit tests for the pure functions, and for the test oracle above
+.streamlit/config.toml     the 1000 MB upload ceiling, and no [theme] block on purpose
 ```
 
 Flow: `UploadedFile` (or `st.audio_input`) → `decode_to_mono16k` → flat `np.float32` array at 16 kHz +
@@ -305,6 +306,15 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   long-form chunking; past it VAD's per-speech-run splitting reaches thousands and the trade inverts.
 - **`st.cache_resource(max_entries=1)`** keeps exactly one multi-gigabyte model resident, so pointing
   the app at another repo evicts rather than accumulates.
+- **`.streamlit/config.toml` ships no `[theme]` block, on purpose.** Streamlit offers the light/dark
+  switch in its settings menu only when both `[theme.light]` and `[theme.dark]` are defined; a flat
+  `[theme]` carrying even one key — `baseFontSize` alone was enough — sends a custom theme whose
+  unset `base` decays to the protobuf enum's zero value, light, and pins every visitor there
+  regardless of their OS setting. Shipping no theme at all is what restores the stock pair and lets
+  the app follow the browser. The absence is the decision, so it is the one thing here a reader
+  cannot find by reading code. The same file raises `maxUploadSize` to 1000 MB — Streamlit's default
+  is 200, which an hour of 48 kHz stereo WAV runs well past — and that is the ceiling the
+  `getvalue()` measurement above is taken against.
 
 ## Model limits — not missing features
 

@@ -180,6 +180,13 @@ def _patch_vad_dtype() -> None:
         segments, meta = original(
             self, np.asarray(waveform, dtype=np.float32), *args, **kwargs
         )
+        # 30.0, not the 35 in the docstring above: those are two different
+        # windows. 35 is `max_audio_clip_s` off the checkpoint, which
+        # `_prepare_segments` applies on the non-VAD path; this is the VAD
+        # path's own cap, and 30.0 is what `generate` defaults
+        # `vad_max_chunk_s` to upstream. Reconciling them would cap VAD chunks
+        # above what the caller asked for. `max_chunk_s` is keyword-only there
+        # (`*` precedes it), so the get() cannot miss a positional one.
         return _cap_segment_length(
             segments, meta, kwargs.get("max_chunk_s", 30.0), self.sample_rate
         )
