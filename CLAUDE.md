@@ -51,7 +51,10 @@ against **Python 3.10**, inferred from `requires-python`, not the 3.12 in `.pyth
 what verifies the floor the package claims, and it is why `enum.StrEnum` degrades to `Unknown` in
 `--verbose` output. Do not "fix" that by pinning `[tool.ty.environment] python-version` to 3.12.
 
-The weights are gated: accept the terms on the Hub, then `uv run hf auth login`. Only wav, mp3 and
+The weights are gated: accept the terms on the Hub, then `uv run --frozen hf auth login`.
+`--frozen` is not decoration — a bare `uv run` re-locks and re-syncs when `uv.lock` is stale against
+`pyproject.toml`, which is the hazard `preflight.sh`'s header names as its reason for keeping every
+probe local, and the reason its HF probe was deleted for prescribing the un-flagged spelling. Only wav, mp3 and
 flac decode through miniaudio; every other advertised format needs `ffmpeg` on PATH.
 
 ### Testing

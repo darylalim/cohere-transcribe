@@ -30,7 +30,7 @@ The weights are gated. Accept the terms at
 then authenticate:
 
 ```bash
-uv run hf auth login
+uv run --frozen hf auth login
 ```
 
 ## Run

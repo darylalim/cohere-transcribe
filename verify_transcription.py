@@ -1,6 +1,6 @@
 """Smoke test the real transcription path against known ground truth.
 
-Run from the repository root, once `uv run hf auth login` has a valid token:
+Run from the repository root, once `uv run --frozen hf auth login` has a valid token:
 
     uv run verify_transcription.py
 
