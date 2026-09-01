@@ -81,6 +81,38 @@ jobs:
         if: ${{ !cancelled() && steps.pin.outcome == 'success' }}
         run: uvx "${RUFF}" format --check --output-format=github .
 
+      # The hooks are the one thing in this repo no checker sees.
+      # .claude/hooks/edit-checks.sh filters on *.py, so a .sh file Claude edits
+      # is checked by nothing in-session, and both ways a hook breaks are silent.
+      #
+      # A syntax error makes guard.sh return rc=2 on every payload, and since its
+      # PreToolUse matcher is Bash|Edit|Write|Read it then blocks the Edit that
+      # would repair it. A `set -u` typo is worse: `bash -n` passes clean, the
+      # misspelled $RE_INSTAL raises "unbound variable", the hook exits 1 -- and
+      # rc=1 is neither 0 nor 2, so the tool call proceeds and an out-of-lockfile
+      # `pip install` sails through unguarded. Both measured. b06c493 is titled
+      # "Fix the hooks the previous commit shipped broken", so this is not
+      # hypothetical.
+      #
+      # shellcheck rather than `bash -n`, which catches only the first of those:
+      # SC2153 names the misspelling ("RE_INSTAL may not be assigned. Did you
+      # mean RE_INSTALL?") and SC2034 flags the original going unused. It is
+      # preinstalled on the ubuntu images, needs no uv, and returns a verdict,
+      # which is this workflow's rule for admitting a step. -x follows the lib.sh
+      # that edit-checks.sh sources.
+      #
+      # Blocking rather than advisory, and unpinned unlike ruff: shellcheck is
+      # long past 1.0 and ships roughly yearly, so it is not the near-daily
+      # moving target that keeps ty on continue-on-error. The version is echoed
+      # so an image promotion that changes the verdict is diagnosable from the
+      # log -- which is also where the findings are, since shellcheck has no
+      # GitHub annotation format and a blocking step is read on failure anyway.
+      - name: shellcheck the hooks
+        if: ${{ !cancelled() }}
+        run: |
+          shellcheck --version | awk '/^version:/{print "shellcheck " $2}'
+          shellcheck -x .claude/hooks/*.sh
+
   test:
     # ubuntu, and this is the one job here that can be. tests/test_pure.py never
     # imports mlx_audio -- utils/ keeps those imports inside the functions that

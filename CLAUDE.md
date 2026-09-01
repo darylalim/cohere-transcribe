@@ -146,7 +146,7 @@ is also what keeps the file inside the ubuntu `test` job's charter.
 ### CI
 
 `.github/workflows/ci.yml` adds no tests; it runs the ones already here. Four jobs: `lint` on ubuntu
-(ruff only, and no `uv sync` — it needs none), `test` on ubuntu (`uv sync --locked` and pytest),
+(ruff and shellcheck, and no `uv sync` — it needs none), `test` on ubuntu (`uv sync --locked` and pytest),
 `check` on macos-15 (`uv sync --locked`, ty, and the decode matrix), and `integration`, which runs the
 whole script against real weights and is `workflow_dispatch` only — gated weights plus GitHub
 withholding secrets from fork pull requests mean it can never be a required check. It needs an
