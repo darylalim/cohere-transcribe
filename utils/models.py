@@ -147,7 +147,7 @@ def _pin_vad_repo(model, selector) -> None:
 
 
 def _patch_vad_dtype() -> None:
-    """Work around the VAD path in mlx-audio 0.4.7, which assumes numpy.
+    """Work around the VAD path in mlx-audio 0.4.7 through 0.5.1, which assumes numpy.
 
     ``Model._segment_with_vad`` is written against numpy throughout — it reaches
     ``waveform.astype(np.float32)`` inside the Silero backend and

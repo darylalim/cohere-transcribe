@@ -8,11 +8,23 @@ dependencies = [
     # 1.61, not 1.57: `icon=` on st.metric lands there, and the metrics row passes
     # it. Established by resolving every `st.*` call the app makes against clean
     # 1.57/1.58/1.59/1.60 installs, where that one argument is the only casualty.
-    # uv.lock pins 1.61.1, so a floor that undershoots is invisible to `uv sync
+    # uv.lock pins 1.62.0, so a floor that undershoots is invisible to `uv sync
     # --locked` and to CI -- it only breaks whoever resolves from this file alone.
     "streamlit>=1.61",
     # 0.4.4 brought the faster long-form path and VAD pre-processing for Cohere ASR.
-    "mlx-audio>=0.4.4",
+    #
+    # `[stt]` is not decoration -- it is the only thing that names sentencepiece, which
+    # `CohereAsrTokenizer.__init__` imports unconditionally. `post_load_hook` builds that
+    # tokenizer as the last step of the load, *after* `load_weights(strict=True)` has
+    # already passed, so a missing sentencepiece surfaces as a bare ModuleNotFoundError
+    # four gigabytes in rather than at resolve time -- past the one check this app treats
+    # as its integrity gate. Until mlx-audio 0.5.1 it arrived by accident, as a transitive
+    # of mlx-lm; 0.5.1 vendors its own KVCache, drops mlx-lm, and takes sentencepiece with
+    # it, so `mlx-audio>=0.4.4` with no extras already admits a release that cannot
+    # transcribe. The extra exists as far back as 0.4.4, so this states the requirement
+    # without moving the floor. Nothing in CI would catch its absence: `test` never
+    # imports mlx_audio and `check` runs check_decoding, which needs no model.
+    "mlx-audio[stt]>=0.4.4",
     "numpy>=2.0",
 ]
 

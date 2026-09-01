@@ -1,9 +1,11 @@
-# No [theme] block on purpose. Streamlit only offers the light/dark switch in the
-# settings menu when both [theme.light] and [theme.dark] are defined; a flat
-# [theme] with even one key — baseFontSize alone was enough — sends a custom theme
-# whose unset `base` decays to the protobuf enum zero value, light, and pins every
-# visitor there regardless of their OS setting. Shipping no theme at all is what
-# restores the stock light/dark pair and lets the app follow the browser.
+# No [theme] block on purpose. As of Streamlit 1.62.0 the settings menu offers the
+# light/dark switch only when [theme.light] or [theme.dark] carries at least one
+# key — either alone is enough, since the frontend builds the missing half from the
+# flat [theme] keys with base forced to that half. A flat [theme] with even one
+# key — baseFontSize alone was enough — sends a custom theme whose unset `base`
+# decays to the protobuf enum zero value, light, and pins every visitor there
+# regardless of their OS setting. Shipping no theme at all is what restores the
+# stock light/dark pair and lets the app follow the browser.
 
 [server]
 # An hour of 48 kHz stereo WAV runs well past Streamlit's 200 MB default.

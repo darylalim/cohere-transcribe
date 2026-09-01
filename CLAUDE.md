@@ -26,9 +26,12 @@ When working with Python, invoke the relevant `/astral:<skill>` — `/astral:uv`
 
 Use `uv sync`, never `uv pip install -e .` — the latter re-resolves from `pyproject.toml` and ignores
 the committed `uv.lock` entirely. That distinction is load-bearing here: `_patch_vad_dtype` wraps a
-*private* mlx-audio method against 0.4.7 internals while `pyproject.toml` only asks for `>=0.4.4`, so
-the lockfile is the only thing pinning the version that patch was written against. `pyproject.toml`
-has no `[build-system]` on purpose — uv then treats the project as non-packaged and installs just the
+*private* mlx-audio method against internals `pyproject.toml` does not pin — it asks only for
+`>=0.4.4` — so the lockfile is the only thing holding the release that patch was checked against:
+0.5.1 today, which differs from the 0.4.7 it was written for by one import in `cohere_asr.py` —
+`KVCache` now resolved from mlx-audio's own `lm.models.cache` rather than `mlx_lm` — leaving
+`_segment_with_vad` and the module's other five files byte-identical. `pyproject.toml` has no
+`[build-system]` on purpose — uv then treats the project as non-packaged and installs just the
 dependencies, which is what the app wants, since it runs as scripts from the repo root and imports
 `utils` relative to cwd.
 
@@ -39,7 +42,7 @@ rule set — the version is what decides which rules exist, and this project has
 
 ty is deliberately *not* pinned the same way: it is pre-1.0 and ships near-daily, so a pin would go
 stale within weeks, and it has no `required-version` setting to hold one anyway. Clean as of ty
-0.0.70. A new release surfacing new diagnostics is expected rather than a regression. The three
+0.0.77. A new release surfacing new diagnostics is expected rather than a regression. The three
 `ty: ignore` directives in `utils/models.py` need no policing — `unused-ignore-comment` is on by
 default, so ty reports them itself once its inference no longer needs them. Note also that ty checks
 against **Python 3.10**, inferred from `requires-python`, not the 3.12 in `.python-version`: that is
@@ -154,7 +157,7 @@ Two consequences worth knowing before editing anything:
 
 `.claude/` carries three, and the rule for admitting a fourth is that the failure it catches must be
 **silent**. Everything in `guard.sh` succeeds while being wrong: a `pip install` that moves mlx-audio
-off the 0.4.7 `_patch_vad_dtype` targets, a credential read, four gigabytes downloaded before
+off the 0.5.1 `_patch_vad_dtype` targets, a credential read, four gigabytes downloaded before
 anything says why. A rule rejecting an unpinned `uvx ruff` was removed under that test — ruff reads
 `required-version` itself and aborts with the whole diagnosis in the error, so the hook bought one
 round trip.
@@ -195,6 +198,27 @@ Everything downstream of decoding assumes mono float32 at `audio.SAMPLE_RATE`; n
 `streamlit_app.py` passes `sample_rate=16_000` as a literal to `generate`, so changing `SAMPLE_RATE`
 alone would desync the two.
 
+mlx-audio 0.5.1 changed the miniaudio path inside `audio_read` — wav, mp3 and flac here, since every
+other format already goes to ffmpeg. Whenever the requested rate is below the file's native one, the
+decode now streams through a chunked scipy polyphase FIR (`mlx_audio.resample`) rather than
+miniaudio's own sample-rate conversion. Signature, return tuple, dtype and sample count are
+unchanged; only the sample values are, and two things follow from that. Samples are no longer bounded
+by ±1.0, because the FIR runs in float32 *after* normalisation instead of in the clamped int16
+domain — a full-scale square wave measures 1.19 through `decode_to_mono16k` at 44.1 kHz and 1.22 at
+22.05 kHz, while the same content already at 16 kHz takes no FIR and peaks at exactly 1.0. Do not
+"fix" that with a clip or an amplitude assertion: nothing between `decode_to_mono16k` and the encoder
+clamps, `cohere_asr` log-mels and then standardises per feature (`normalize = "per_feature"`), and
+only sharp transients ring — a 440 Hz sine resamples to 1.0 — so such an assertion would pass every
+fixture in this repo and fire first on a real upload. And decoding is no longer effectively free: an
+hour of 48 kHz mono measures 27 s against 0.1 s for the same hour already at 16 kHz, and
+`scipy.signal` is imported on that first downsampling decode from inside `decode_to_mono16k`'s `try`,
+so a scipy that cannot import lands in the ffmpeg fallback rather than raising. `_decode_with_ffmpeg`
+is untouched — it divides int16 by 32768 and stays inside ±1.0 — so the container *and* the file's
+native rate together decide which behaviour an upload gets. Note that the WER numbers do not cover
+any of this: `verify_transcription.py` synthesizes AIFF, which miniaudio rejects outright, so every
+transcription it measures took the ffmpeg path. Only `check_decoding`'s wav, mp3 and flac rows reach
+the FIR at all, and they assert duration, never amplitude.
+
 Heavy imports (`mlx_audio.stt`, `mlx_audio.audio_io`) live inside the functions that need them, so
 the sidebar renders before anything expensive happens.
 
@@ -210,13 +234,24 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   `mlx.nn.Module.load_weights(strict=True)` can raise.
 - **Gated-repo errors are matched by exception type**, never by `"401"` in the message — a shard named
   `model-00401-of-00500` was enough to route disk-full errors to "run `hf auth login`".
+- **`pyproject.toml` asks for `mlx-audio[stt]`, and the extra is not decoration.** It is the only
+  thing naming `sentencepiece`, which `CohereAsrTokenizer.__init__` imports unconditionally.
+  `post_load_hook` builds that tokenizer as the last step of the load — *after*
+  `load_weights(strict=True)` has already passed — so a missing `sentencepiece` surfaces as a bare
+  `ModuleNotFoundError` four gigabytes in, past the one check this app treats as its integrity gate.
+  Until mlx-audio 0.5.1 it arrived by accident, as a transitive of `mlx-lm`; 0.5.1 vendors its own
+  `KVCache`, drops `mlx-lm`, and takes `sentencepiece` with it, so a bare `mlx-audio>=0.4.4` already
+  admits a release that cannot transcribe. The extra exists as far back as 0.4.4, so it states the
+  requirement without moving the floor. No CI job would catch its absence: `test` never imports
+  `mlx_audio`, and `check` runs `check_decoding`, which needs no model — only `integration` would go
+  red, and that is `workflow_dispatch` only.
 - **`_patch_vad_dtype()` monkeypatches the private `Model._segment_with_vad`** because that function is
-  numpy code throughout while `generate` hands it an `mx.array` (mlx-audio 0.4.7). It runs on every
-  load, is idempotent via the `_coerces_numpy` flag, and no-ops if the method disappears upstream. Its
-  wrapper also calls `_cap_segment_length`, which is *not* part of the upstream bug: when Silero
-  detects no speech it returns the whole waveform as one chunk and the 35-second window never applies,
-  so an hour of room tone would reach the encoder as a single ~57M-sample array. Keep the capping even
-  if the numpy coercion becomes unnecessary.
+  numpy code throughout while `generate` hands it an `mx.array` (mlx-audio 0.4.7 through 0.5.1, still
+  unfixed upstream). It runs on every load, is idempotent via the `_coerces_numpy` flag, and no-ops if
+  the method disappears upstream. Its wrapper also calls `_cap_segment_length`, which is *not* part
+  of the upstream bug: when Silero detects no speech it returns the whole waveform as one chunk and
+  the 35-second window never applies, so an hour of room tone would reach the encoder as a single
+  ~57M-sample array. Keep the capping even if the numpy coercion becomes unnecessary.
 - **`_pin_vad_repo` points VAD at `VAD_REPO` by writing a private attribute.** Seeding
   `model._vad_backend` is the only opening: `_segment_with_vad` builds the backend once per instance
   through `get_backend()`, which hardcodes `mlx-community/silero-vad` (the v5 port) and takes no repo,
@@ -306,15 +341,16 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   long-form chunking; past it VAD's per-speech-run splitting reaches thousands and the trade inverts.
 - **`st.cache_resource(max_entries=1)`** keeps exactly one multi-gigabyte model resident, so pointing
   the app at another repo evicts rather than accumulates.
-- **`.streamlit/config.toml` ships no `[theme]` block, on purpose.** Streamlit offers the light/dark
-  switch in its settings menu only when both `[theme.light]` and `[theme.dark]` are defined; a flat
-  `[theme]` carrying even one key — `baseFontSize` alone was enough — sends a custom theme whose
-  unset `base` decays to the protobuf enum's zero value, light, and pins every visitor there
-  regardless of their OS setting. Shipping no theme at all is what restores the stock pair and lets
-  the app follow the browser. The absence is the decision, so it is the one thing here a reader
-  cannot find by reading code. The same file raises `maxUploadSize` to 1000 MB — Streamlit's default
-  is 200, which an hour of 48 kHz stereo WAV runs well past — and that is the ceiling the
-  `getvalue()` measurement above is taken against.
+- **`.streamlit/config.toml` ships no `[theme]` block, on purpose.** As of 1.62.0, Streamlit offers
+  the light/dark switch in its settings menu only when `[theme.light]` or `[theme.dark]` carries at
+  least one key — either alone is enough, since the frontend builds the missing half from the flat
+  `[theme]` keys with `base` forced to that half; a flat `[theme]` carrying even one key —
+  `baseFontSize` alone was enough — sends a custom theme whose unset `base` decays to the protobuf
+  enum's zero value, light, and pins every visitor there regardless of their OS setting. Shipping no
+  theme at all is what restores the stock pair and lets the app follow the browser. The absence is
+  the decision, so it is the one thing here a reader cannot find by reading code. The same file
+  raises `maxUploadSize` to 1000 MB — Streamlit's default is 200, which an hour of 48 kHz stereo WAV
+  runs well past — and that is the ceiling the `getvalue()` measurement above is taken against.
 
 ## Model limits — not missing features
 
@@ -342,6 +378,6 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   makes was resolved against clean 1.57 through 1.61 installs, and `icon=` on `st.metric` is the one
   that moves it — it does not exist before **1.61**, while everything else here, `.open` gating
   included, resolves as far back as 1.57. The floor read `>=1.57` for exactly that reason before
-  anyone checked: `uv.lock` pins 1.61.1, so `uv sync --locked` and all of CI install a version that
+  anyone checked: `uv.lock` pins 1.62.0, so `uv sync --locked` and all of CI install a version that
   satisfies any floor, and an undershooting one breaks only whoever resolves from `pyproject.toml`
   alone. Re-check it the same way when adding an API, rather than inferring it from a changelog.

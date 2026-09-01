@@ -36,7 +36,7 @@ if [[ -z "${HF_TOKEN:-}" ]] \
   notes+=("No Hugging Face credentials found -- the gated checkpoint will fail to download. Accept the terms on the Hub, then 'uv run hf auth login'.")
 fi
 
-[[ -f "$root/uv.lock" ]] || notes+=("uv.lock is missing -- 'uv sync' will resolve fresh and may not pin the mlx-audio 0.4.7 that _patch_vad_dtype targets.")
+[[ -f "$root/uv.lock" ]] || notes+=("uv.lock is missing -- 'uv sync' will resolve fresh and may not pin the mlx-audio 0.5.1 that _patch_vad_dtype targets.")
 
 ((${#notes[@]})) && printf '%s\n' "${notes[@]}"
 exit 0

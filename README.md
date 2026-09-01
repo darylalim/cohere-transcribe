@@ -132,12 +132,13 @@ These are model limits, not missing features in this app:
 
 ## Known upstream issues
 
-**`vad=True` crashes in mlx-audio 0.4.7.** `Model._segment_with_vad` is numpy
-code — its own return annotation is `List[np.ndarray]` — but `generate` hands it
-the `mx.array` from `_to_mono`. It fails twice: `.astype(np.float32)` inside the
-Silero backend, then `waveform[a:b].copy()` when slicing runs out. MLX arrays
-have neither method. `utils/models._patch_vad_dtype` coerces once at that
-boundary. Delete it once mlx-audio ships a fix.
+**`vad=True` crashes in mlx-audio 0.4.7 through 0.5.1.**
+`Model._segment_with_vad` is numpy code — its own return annotation is
+`List[np.ndarray]` — but `generate` hands it the `mx.array` from `_to_mono`. It
+fails twice: `.astype(np.float32)` inside the Silero backend, then
+`waveform[a:b].copy()` when slicing runs out. MLX arrays have neither method.
+`utils/models._patch_vad_dtype` coerces once at that boundary. Delete it once
+mlx-audio ships a fix.
 
 **mlx-audio's VAD repo is fixed at the v5 Silero port.** `get_backend()` in
 `cohere_asr/vad.py` hardcodes `mlx-community/silero-vad`, and `generate` takes

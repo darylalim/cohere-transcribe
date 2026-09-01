@@ -108,9 +108,9 @@ jobs:
       # `uv lock --check` step for exactly that until it was cut -- the same
       # assertion on the same triggers, so it could never have failed alone.
       # It matters because uv.lock is the only thing pinning mlx-audio to the
-      # 0.4.7 that _patch_vad_dtype was written against; pyproject.toml asks
-      # only for >=0.4.4, and a drifted lockfile is a real defect here rather
-      # than bookkeeping.
+      # 0.5.1 that _patch_vad_dtype targets; pyproject.toml asks only for
+      # >=0.4.4, and a drifted lockfile is a real defect here rather than
+      # bookkeeping.
       #
       # pytest arrives with it, from the `dev` dependency group.
       - name: uv sync
