@@ -21,7 +21,12 @@ set -uo pipefail
 payload=$(cat)
 tool=$(jq -r '.tool_name // empty' <<<"$payload")
 
-decide() { # $1 = allow|deny|ask|defer, $2 = reason shown to Claude
+decide() { # $1 = allow|deny|ask -- the three permissionDecision takes; only the
+           # last two are used here. It read "allow|deny|ask|defer" until a rule
+           # written against that comment would have emitted a value the host
+           # does not recognise -- and since this hook exits 0 either way, the
+           # result would have been an unnoticed abstention, not an error.
+           # $2 = reason shown to Claude
   jq -n --arg d "$1" --arg r "$2" '{hookSpecificOutput:{
     hookEventName:"PreToolUse", permissionDecision:$d, permissionDecisionReason:$r}}'
   exit 0
@@ -30,7 +35,6 @@ decide() { # $1 = allow|deny|ask|defer, $2 = reason shown to Claude
 # hf auth login writes these; `token` is the default profile and `stored_tokens`
 # holds the named ones. Both are mode 600 and neither needs to be opened here.
 RE_CRED='(secrets\.toml|huggingface/(token|stored_tokens))'
-RE_READ_CRED="(cat|head|tail|less|more|bat|od|xxd|strings|base64|cp|grep|rg|awk|sed)[^;&|]*${RE_CRED}"
 # Any install that does not come from the lockfile. `uv pip install` was the only
 # spelling covered before, but pip is on PATH inside .venv, so a bare
 # `pip install mlx-audio==0.5.0` mutates the same environment.
@@ -65,8 +69,34 @@ case "$tool" in
 
     # Reading a credential through the shell is the same act as reading it with
     # the Read tool; the earlier version of this hook guarded only the latter.
-    if [[ "$cmd" =~ $RE_READ_CRED ]]; then
-      decide deny "That reads Hugging Face credentials. huggingface_hub finds the token on its own; nothing here needs its contents."
+    #
+    # Match the path, exactly as the Read arm above does. This sat behind an
+    # alternation of fourteen reader commands until that was measured, and
+    # enumerating readers turns out to be the wrong axis in both directions. Of
+    # 17 real spellings of a credential read, 15 walked straight through: a verb
+    # outside the list (tr, cut, tee, dd, or python3 -c open(...)), any ; && or |
+    # between verb and path defeating the [^;&|]* join (cd into the cache, then
+    # cat a bare relative "token"), or a redirection with no verb at all. In the
+    # other direction the short entries carried no word boundaries, so `od`
+    # matched inside chmod and code, `rg` inside merge, `less` inside unless and
+    # `cat` inside location -- across 57 transcripts of this project the rule
+    # fired exactly twice, both on a command auditing the hook itself, and never
+    # once on a credential read.
+    #
+    # The wider match does deny commands that merely name the file without
+    # reading it -- chmod on it, or an echo mentioning secrets.toml. That is the
+    # loud direction and the cheap one: the reason string quotes the path, so
+    # Claude self-corrects in a turn, where all fifteen misses above were silent.
+    #
+    # Twelve of those fifteen close here. Three cannot, and no string match will
+    # reach them, because the path never appears in the command: `cd` into the
+    # directory then read a bare relative name, an assembled variable, and
+    # `find -exec`. Those need a shell grammar rather than a regex -- which is
+    # what the CLI's own Read() deny path has, and this hook does not. Left open
+    # knowingly, and written down rather than papered over with a longer
+    # alternation that would not catch them either.
+    if [[ "$cmd" =~ $RE_CRED ]]; then
+      decide deny "That command names a Hugging Face credential file. huggingface_hub finds the token on its own -- nothing here needs its contents, its mode or its location."
     fi
 
     if [[ "$cmd" =~ $RE_INSTALL ]]; then
