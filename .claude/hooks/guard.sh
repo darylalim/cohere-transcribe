@@ -21,12 +21,20 @@ set -uo pipefail
 payload=$(cat)
 tool=$(jq -r '.tool_name // empty' <<<"$payload")
 
-decide() { # $1 = allow|deny|ask -- the three permissionDecision takes; only the
-           # last two are used here. It read "allow|deny|ask|defer" until a rule
-           # written against that comment would have emitted a value the host
-           # does not recognise -- and since this hook exits 0 either way, the
-           # result would have been an unnoticed abstention, not an error.
-           # $2 = reason shown to Claude
+decide() { # $1 = allow|deny|ask, $2 = reason shown to Claude
+  # Checked, not merely documented. This comment read "allow|deny|ask|defer"
+  # until the extra value was noticed, and correcting the prose left the failure
+  # exactly as silent as it found it: a future `decide defer ...` still emits
+  # well-formed JSON carrying a permissionDecision the host does not recognise,
+  # the hook still exits 0, the tool call still proceeds, and no channel says a
+  # word. That is this directory's admission test read backwards -- a silent
+  # failure is the one kind worth spending a line of code on, not a line of
+  # comment.
+  case "$1" in
+    allow|deny|ask) ;;
+    *) printf 'guard.sh: decide called with %q, which permissionDecision does not accept.\n' "$1" >&2
+       exit 2 ;;
+  esac
   jq -n --arg d "$1" --arg r "$2" '{hookSpecificOutput:{
     hookEventName:"PreToolUse", permissionDecision:$d, permissionDecisionReason:$r}}'
   exit 0
@@ -43,20 +51,40 @@ RE_INSTALL='(^|[;&|(`[:space:]])(uv[[:space:]]+pip[[:space:]]+(install|sync)|([.
 # sanctioned path, and the install deny above points at it -- but a human should
 # see mlx-audio being allowed to move.
 RE_RELOCK_ADD='(^|[;&|[:space:]])uv[[:space:]]+(add|remove)([[:space:]]|$)'
-# `--upgrade-package` and its short form `-P`, not just `--upgrade`/`-U`. The
-# trailing ([[:space:]]|$) meant the hyphen in `uv lock --upgrade-package
-# mlx-audio` failed the match -- so the single most precise way to move exactly
-# the dependency this rule names in its own reason string was the one spelling
-# it could not see, and a reader following CLAUDE.md reaches for it first.
-RE_RELOCK_UP='(^|[;&|[:space:]])uv[[:space:]]+(lock|sync)[^;&|]*(--upgrade(-package)?|-[UP])([[:space:]]|$)'
-# The Edit/Write ask below gates the lockfile against the file tools. Nothing
-# gated the same act spelled as a shell command, and two spellings reach a
+# `--upgrade-package` and its short form `-P`, not just `--upgrade`/`-U`, and
+# every way clap lets a value be attached to either. The first version of this
+# rule required whitespace or end-of-string straight after the flag, which the
+# hyphen in `--upgrade-package` failed -- and the first fix for that kept the
+# same trailing anchor, so `--upgrade-package=mlx-audio` and `-Pmlx-audio` went
+# on passing silently. Same defect, twice, on the flag that names this rule's own
+# subject: the most precise way to move exactly the dependency the reason string
+# talks about was the spelling it could not see. Hence three boundaries rather
+# than one -- `=` or space after a long flag, space after `-U`, and anything at
+# all after `-P`, which takes its value attached.
+RE_RELOCK_UP='(^|[;&|[:space:]])uv[[:space:]]+(lock|sync)[^;&|]*(--upgrade(-package)?([=[:space:]]|$)|-U([[:space:]]|$)|-P)'
+# The Edit/Write ask above gates the lockfile against the file tools. Nothing
+# gated the same act spelled as a shell command, and several spellings reach a
 # re-resolved mlx-audio without going through `uv add` at all: `rm uv.lock &&
-# uv sync` deletes the pin instead of raising it, and an in-place `sed` edits it
-# where the Edit tool would have prompted. preflight.sh already treats a missing
-# uv.lock as a reportable condition, so the repo agreed that state was dangerous
-# while leaving the command that produces it ungated.
-RE_LOCK_WRITE='((^|[;&|[:space:]])(rm|unlink|mv|truncate|tee|sed)[^;&|]*uv\.lock|>[[:space:]]*uv\.lock)'
+# uv sync` deletes the pin instead of raising it, `cp`/`git checkout` revert it,
+# and an in-place `sed` or `perl -pi` edits it where the Edit tool would have
+# prompted. preflight.sh already treats a missing uv.lock as a reportable
+# condition, so the repo agreed that state was dangerous while leaving every
+# command that produces it ungated.
+#
+# This keeps the enumerate-the-verb axis that the credential rule above was
+# rewritten to abandon, and the difference is the point rather than an
+# oversight: naming the token is itself the suspicious act, so there the path is
+# the whole signal, while reading uv.lock is routine -- `cat`, `grep` and
+# `git diff` on it are all normal here -- so only the writing verbs can be
+# gated. That makes this list best-effort by construction. `_LOCK` ends on a
+# character that cannot continue a filename, so `uv.lock.bak` and `uv.lock.orig`
+# no longer prompt while a quoted `'uv.lock'` still matches; the redirect branch
+# allows a path in front, which `> ./uv.lock` needed.
+_LOCK='[^;&|]*uv\.lock([^.[:alnum:]_-]|$)'
+RE_LOCK_WRITE="((^|[;&|[:space:]])(rm|unlink|mv|cp|truncate|tee|perl|python3?)${_LOCK}\
+|(^|[;&|[:space:]])sed[^;&|]*-i${_LOCK}\
+|(^|[;&|[:space:]])git[[:space:]]+(checkout|restore)${_LOCK}\
+|>[[:space:]]*[^;&|[:space:]]*uv\.lock([^.[:alnum:]_-]|$))"
 # Only an actual run. Matching the bare filename made `ruff check
 # verify_transcription.py` -- the lint command CLAUDE.md prescribes -- prompt with
 # a 4 GB download warning, which is how a real run gets waved through.
@@ -109,7 +137,12 @@ case "$tool" in
     # knowingly, and written down rather than papered over with a longer
     # alternation that would not catch them either.
     if [[ "$cmd" =~ $RE_CRED ]]; then
-      decide deny "That command names a Hugging Face credential file. huggingface_hub finds the token on its own -- nothing here needs its contents, its mode or its location."
+      # Quote the fragment that matched. The comment above accepts false
+      # positives on the grounds that the reason string names the path so Claude
+      # self-corrects in a turn -- which the Read arm's message does and this one
+      # did not, leaving a compound command with no indication of which part of
+      # it tripped the rule.
+      decide deny "That command names a Hugging Face credential file (matched: ${BASH_REMATCH[0]}). huggingface_hub finds the token on its own -- nothing here needs its contents, its mode or its location."
     fi
 
     if [[ "$cmd" =~ $RE_INSTALL ]]; then
@@ -117,7 +150,7 @@ case "$tool" in
     fi
 
     if [[ "$cmd" =~ $RE_LOCK_WRITE ]]; then
-      decide ask "That rewrites or deletes uv.lock from the shell, which the Edit/Write gate below does not see. uv.lock is the only thing pinning mlx-audio to the 0.5.1 internals _patch_vad_dtype targets -- pyproject.toml asks merely for >=0.4.4, so a fresh resolve after this is unconstrained."
+      decide ask "That rewrites or deletes uv.lock from the shell, which the gate on the Edit and Write tools does not see. uv.lock is the only thing pinning mlx-audio to the 0.5.1 internals _patch_vad_dtype targets -- pyproject.toml asks merely for >=0.4.4, so a fresh resolve after this is unconstrained."
     fi
 
     if [[ "$cmd" =~ $RE_RELOCK_ADD ]] || [[ "$cmd" =~ $RE_RELOCK_UP ]]; then
