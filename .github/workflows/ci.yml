@@ -101,17 +101,23 @@ jobs:
       # which is this workflow's rule for admitting a step. -x follows the lib.sh
       # that edit-checks.sh sources.
       #
-      # Blocking rather than advisory, and unpinned unlike ruff: shellcheck is
-      # long past 1.0 and ships roughly yearly, so it is not the near-daily
-      # moving target that keeps ty on continue-on-error. The version is echoed
-      # so an image promotion that changes the verdict is diagnosable from the
-      # log -- which is also where the findings are, since shellcheck has no
-      # GitHub annotation format and a blocking step is read on failure anyway.
+      # Blocking, and pinned for exactly the reason ruff is. This step first ran
+      # the runner's own shellcheck, arguing that a roughly yearly release
+      # cadence made a pin unnecessary -- but the line this workflow draws is
+      # about whether a verdict is reproducible, not how often the tool moves.
+      # ubuntu-24.04 ships 0.10.0 where the machine this was written on has
+      # 0.11.0, so the two disagreed by environment before the step had run once,
+      # and shellcheck does enable new checks by default in minor releases
+      # (SC2317 in 0.9, SC2329 in 0.10) -- any of which would turn every open
+      # pull request red on a hook nobody had touched. required-version holds
+      # that line for ruff; shellcheck has no equivalent setting, so the pin
+      # lives in the invocation. Bumping it is then a commit, which is the point.
+      #
+      # Findings land in the log rather than as annotations: shellcheck has no
+      # GitHub output format, and a blocking step is read on failure anyway.
       - name: shellcheck the hooks
         if: ${{ !cancelled() }}
-        run: |
-          shellcheck --version | awk '/^version:/{print "shellcheck " $2}'
-          shellcheck -x .claude/hooks/*.sh
+        run: uvx --from shellcheck-py==0.11.0.1 shellcheck -x .claude/hooks/*.sh
 
   test:
     # ubuntu, and this is the one job here that can be. tests/test_pure.py never
