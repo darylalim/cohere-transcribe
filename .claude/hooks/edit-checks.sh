@@ -11,27 +11,20 @@ set -uo pipefail
 
 root="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 
-# Fail closed when lib.sh cannot be sourced, rather than checking nothing and
-# saying so nowhere. `set -u` is on but `set -e` is not, so a failed source used
-# to fall straight through to `tooling_reachable "$RUFF" || exit 0` below -- an
-# undefined command, so the `||` fired and the hook exited 0 having formatted
-# nothing and reported nothing. Measured: rc=0 with the dirty file byte-identical,
-# against rc=2 and an F401 report with lib.sh in place. The `command not found`
-# lines bash prints land on stderr of an exit-0 hook, which is not surfaced the
-# way exit 2 is, so the only in-session checker went quiet without a word. That
-# is the same succeeds-while-being-wrong shape guard.sh exists to catch, living
-# inside the hooks themselves -- and it is far more reachable than the jq both
-# hooks parse their payload with, since lib.sh is a repo file one rename or bad
-# merge away rather than an OS binary at /usr/bin.
-lib="$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-# shellcheck source-path=SCRIPTDIR
-# shellcheck source=lib.sh
-source "$lib" || {
-  printf 'edit-checks.sh: cannot source %s -- ruff and ty did NOT run on this edit.\n' "$lib" >&2
+payload=$(cat)
+
+# Read stdin before anything can exit, so no fail-closed path leaves the writer
+# on a broken pipe. jq is checked here rather than assumed: without it `file`
+# comes back empty, the *.py test below fails, and the hook exits 0 having
+# checked nothing -- the same silent no-op the lib.sh guard further down exists
+# to stop. This report is stderr plus exit 2, so unlike guard.sh it needs no jq
+# to deliver its own failure. It cannot say which file was edited, because
+# working that out is exactly what just broke.
+command -v jq >/dev/null || {
+  printf 'edit-checks.sh: jq is not on PATH, so the payload could not be read and this edit went unchecked.\n' >&2
   exit 2
 }
 
-payload=$(cat)
 file=$(jq -r '.tool_input.file_path // empty' <<<"$payload")
 [[ "$file" == *.py && -f "$file" ]] || exit 0
 
@@ -42,6 +35,37 @@ case "$(cd "$(dirname "$file")" && pwd -P)/" in
   "$(cd "$root" && pwd -P)"/*) ;;
   *) exit 0 ;;
 esac
+
+# Fail closed when the helpers are not available, rather than checking nothing
+# and saying so nowhere. `set -u` is on but `set -e` is not, so this used to fall
+# straight through to `tooling_reachable "$RUFF" || exit 0` below -- an undefined
+# command, so the `||` fired and the hook exited 0 having formatted nothing and
+# reported nothing. Measured: rc=0 with the dirty file byte-identical, against
+# rc=2 and an F401 report when the helpers are there. The `command not found`
+# lines bash prints land on stderr of an exit-0 hook, which is not surfaced the
+# way exit 2 is, so the only in-session checker went quiet without a word. That
+# is the succeeds-while-being-wrong shape guard.sh exists to catch, living inside
+# the hooks themselves, and lib.sh is a repo file one rename or bad merge away.
+#
+# Two conditions, because the first version tested only the first and the second
+# reproduced the whole failure: a lib.sh that no longer defines ruff_pin or
+# tooling_reachable -- either renamed, or lost to a merge that kept the file --
+# sources cleanly, returns 0, and walks straight past a `source ... ||` guard.
+#
+# Placed after the *.py filter, not before it. Above, a missing lib.sh reported
+# "ruff and ty did NOT run on this edit" on every Edit and Write in the session,
+# including the CLAUDE.md and .yml files they were never going to run on.
+lib="$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=lib.sh
+source "$lib" || {
+  printf 'edit-checks.sh: cannot source %s -- ruff and ty did NOT run on %s.\n' "$lib" "$file" >&2
+  exit 2
+}
+if ! declare -F ruff_pin >/dev/null || ! declare -F tooling_reachable >/dev/null; then
+  printf 'edit-checks.sh: %s does not define ruff_pin and tooling_reachable -- ruff and ty did NOT run on %s.\n' "$lib" "$file" >&2
+  exit 2
+fi
 
 RUFF=$(ruff_pin "$root")
 tooling_reachable "$RUFF" || exit 0   # cold cache / offline is not a lint result
