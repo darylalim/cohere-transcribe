@@ -30,7 +30,9 @@ the committed `uv.lock` entirely. That distinction is load-bearing here: `_patch
 `>=0.4.4` — so the lockfile is the only thing holding the release that patch was checked against:
 0.5.1 today, which differs from the 0.4.7 it was written for by one import in `cohere_asr.py` —
 `KVCache` now resolved from mlx-audio's own `lm.models.cache` rather than `mlx_lm` — leaving
-`_segment_with_vad` and the module's other five files byte-identical. `pyproject.toml` has no
+`_segment_with_vad` and the module's other five files byte-identical. That is `cohere_asr` alone —
+`audio_io` changed materially in the same release, which the decode note under Architecture covers.
+`pyproject.toml` has no
 `[build-system]` on purpose — uv then treats the project as non-packaged and installs just the
 dependencies, which is what the app wants, since it runs as scripts from the repo root and imports
 `utils` relative to cwd.
@@ -54,18 +56,26 @@ flac decode through miniaudio; every other advertised format needs `ffmpeg` on P
 
 ### Testing
 
-Two layers with a strict division of labour. Do not let either drift into the other's job.
+Three layers with a strict division of labour. Do not let any of them drift into another's job.
 
 **`verify_transcription.py` — the integration test.** Synthesizes speech with macOS `say` so the
-reference text is exact, decodes every format in `UPLOAD_TYPES`, then runs short / long-form / VAD
-transcriptions and fails on WER > 15% or > 5% non-ASCII characters. It takes no flags to select a
-subset — comment out calls in `run()` for that. Needs macOS, ffmpeg, a valid HF token, and downloads
-~4 GB on first run; a full pass takes minutes.
+reference text is exact, decodes every format in `UPLOAD_TYPES`, then runs short / 44.1 kHz wav /
+long-form / VAD transcriptions and fails on WER > 15% or > 5% non-ASCII characters. It takes no
+flags to select a subset — comment out calls in `run()` for that. Needs macOS, ffmpeg, a valid HF
+token, and downloads ~4 GB on first run; a full pass takes minutes.
 
 It is the *only* thing that can catch the bug it was written for — a decoder left randomly
 initialised at load returns a confident, non-empty, correctly-typed string, so nothing short of a
 comparison against text we authored ourselves distinguishes a working checkpoint from a broken one.
 No unit test can replace it and none should try.
+
+The `wav-44k` row is there for a different decoder, not a different sentence. `say` writes AIFF,
+which mlx-audio's magic-byte sniffer rejects outright, so every other transcription here reaches the
+model through `_decode_with_ffmpeg` — and mlx-audio 0.5.1 put a scipy polyphase FIR on the miniaudio
+path that the ffmpeg path never touches. `check_decoding` does cross that path, but compares
+durations only, and a gain error, a phase artefact or a truncated tail all survive a length check.
+Re-encoding the fixture to 44.1 kHz wav — above `SAMPLE_RATE`, so the FIR actually runs — is what
+gives the resampler a WER oracle rather than a stopwatch.
 
 `check_vad_backend` is that same argument one level down, and it is why WER cannot be its oracle.
 `mlx_audio.vad.load` is `strict=False`, so a VAD checkpoint whose keys stop matching the module names
@@ -114,6 +124,25 @@ Note that `_cues` handles `segments=None` via `for seg in segments or []` while 
 caller — `Transcript.segments` defaults to a list and `output.segments or []` coerces at
 construction — so it is untested on purpose rather than by oversight.
 
+**`tests/test_smoke.py` — no model either, and no pure functions.** Two things that fall between the
+layers above. Both are cheap, and both were invisible to every job that runs on push.
+
+- **`sentencepiece` is present.** The `[stt]` extra is the only thing naming it, and the failure its
+  absence causes is silent in the worst possible place: `CohereAsrTokenizer.__init__` imports it from
+  a `post_load_hook` that runs *after* `load_weights(strict=True)` has passed, so the whole download
+  and the whole integrity check succeed first. `find_spec` rather than an import, because the
+  question is whether `uv sync` put it in the environment.
+- **`streamlit_app.py` actually runs.** Nothing else executes it — `test_pure.py` imports only
+  `utils`, ruff and ty are static, and `check_decoding` stops at `utils/`. It runs twice: once bare,
+  and once with a `Transcript` seeded into session state, because `streamlit_app.py:28` gates the
+  metrics row, the download buttons and the chunk table on that key and a bare run reaches none of
+  them. The second run is not redundant — mutating `st.dataframe(lazy=True)` to carry a nonexistent
+  keyword leaves the bare run green and turns the seeded one red, which is how the split was found.
+
+This is not the mocked-`generate` test `test_pure.py` rules out. AppTest stops at the first render
+and never presses Transcribe, so `load_asr` is never called and nothing imports `mlx_audio` — which
+is also what keeps the file inside the ubuntu `test` job's charter.
+
 ### CI
 
 `.github/workflows/ci.yml` adds no tests; it runs the ones already here. Four jobs: `lint` on ubuntu
@@ -132,8 +161,9 @@ and ty ran without `--output-format=github`, so `continue-on-error` left its fin
 passing job. Diagnosis is worth a step only where it beats a materially worse alternative, which is
 why the two survivors are the ones guarding a four-gigabyte wait and a truncated annotation.
 
-`test` is on ubuntu because it is the one job that can be: `tests/test_pure.py` never imports
-`mlx_audio` — `utils/` keeps those imports inside the functions that need them — so it needs no Apple
+`test` is on ubuntu because it is the one job that can be: neither `tests/test_pure.py` nor
+`tests/test_smoke.py` imports `mlx_audio` — `utils/` keeps those imports inside the functions that
+need them, and the AppTest run never reaches one — so it needs no Apple
 Silicon, ffmpeg, `say` or token, and Linux runners bill at a fraction of the macOS rate. It doubles
 as the check that `uv sync --locked` really does resolve on Linux — a property `check`'s comment used
 to wave away as not mattering, and which now has a job depending on it, so that comment was corrected
@@ -184,6 +214,7 @@ utils/audio.py             decode to mono 16 kHz float32; SRT/VTT formatting
 utils/models.py            checkpoint registry, language table, cached loader, mlx-audio VAD shim
 verify_transcription.py    integration test against known ground truth
 tests/test_pure.py         unit tests for the pure functions, and for the test oracle above
+tests/test_smoke.py        sentencepiece is installed; streamlit_app.py renders, empty and seeded
 .streamlit/config.toml     the 1000 MB upload ceiling, and no [theme] block on purpose
 ```
 
@@ -244,7 +275,12 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   admits a release that cannot transcribe. The extra exists as far back as 0.4.4, so it states the
   requirement without moving the floor. No CI job would catch its absence: `test` never imports
   `mlx_audio`, and `check` runs `check_decoding`, which needs no model — only `integration` would go
-  red, and that is `workflow_dispatch` only.
+  red, and that is `workflow_dispatch` only. `tests/test_smoke.py` now asserts the extra's effect
+  directly, which is what turns that four-gigabyte failure into a two-second one. The `<0.6` ceiling
+  beside it is the same argument one level up: `_patch_vad_dtype` reproduces a private signature, and
+  its no-op guard covers `_segment_with_vad` being *removed*, not changed — a renamed `max_chunk_s`
+  walks straight past the guard and raises `TypeError` on every `vad=True` call. The range stops
+  where the checking does.
 - **`_patch_vad_dtype()` monkeypatches the private `Model._segment_with_vad`** because that function is
   numpy code throughout while `generate` hands it an `mx.array` (mlx-audio 0.4.7 through 0.5.1, still
   unfixed upstream). It runs on every load, is idempotent via the `_coerces_numpy` flag, and no-ops if
@@ -269,6 +305,10 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   direction: on stdin ffmpeg cannot seek, so an MP4 whose `moov` index sits at the end — the normal
   layout — decodes to nothing and exits 0; on stdout it cannot backfill the RIFF size field. Both
   failures are silent.
+- **Decoded samples are not clamped to ±1.0, and must not be.** mlx-audio 0.5.1's resampler
+  overshoots on sharp transients, so `decode_to_mono16k` can return 1.19 where it used to return 1.0.
+  The decode note under Architecture carries the measurements and the reason a clip or an amplitude
+  assertion is the wrong answer: it would pass every fixture here and fire first on a real upload.
 - **An empty waveform is a failure, not silence.** `decode_to_mono16k` retries through ffmpeg on
   `size == 0` and only then raises. The broad `except Exception` around `audio_read` is deliberate:
   mlx-audio raises `ValueError`, `miniaudio.DecodeError` and `RuntimeError` for the same condition.
@@ -331,14 +371,18 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   re-serialising the chunk table. It is the one interaction here that cannot change a pixel.
   `disabled=not result.text` matches the rule SRT and VTT already follow: a no-speech result still has
   segments, so without it the one button left lit hands over an empty file.
-- **The chunk expander goes lazy only past 100 rows.** `st.expander` computes and ships its contents
-  whether or not it is open, and `.open` means nothing until `on_change` is set — so above the
-  threshold it sets `on_change="rerun"` and gates its body on `segments.open`, and that guard wrapping
-  a `with segments:` block looks redundant and is not. The threshold is the point of the decision, not
-  a tuning knob: `on_change="rerun"` turns every open and close into a full script rerun, the same
-  cost `on_click="ignore"` removes from the buttons just above, so on a 90-second clip's ~3 chunks the
-  lazy path costs more than the Arrow serialisation it avoids. 100 rows is roughly an hour of
-  long-form chunking; past it VAD's per-speech-run splitting reaches thousands and the trade inverts.
+- **The chunk table passes `lazy=True`, and the expander no longer gates itself.** `st.expander`
+  computes and ships its contents whether or not it is open, and VAD splits per speech run rather
+  than per 35-second window, so a long meeting is thousands of rows Arrow-serialised on every rerun
+  for a section nobody expanded. Lazy loading holds them in the app server and sends only the rows in
+  view. That is the same saving a hand-rolled `on_change="rerun"` plus a `.open` gate and a 100-row
+  threshold used to buy, by spending a full script rerun on every open and close — the cost
+  `on_click="ignore"` removes from the buttons just above. Streamlit's own 1000-row floor replaces
+  the threshold: below it rows load eagerly whatever the call says, so ordinary results keep the
+  built-in search and CSV download that lazy loading does not support, and only tables past that
+  floor trade them away. Do not "simplify" it to `lazy=None`: `result.segments` is a `list[dict]`,
+  which the automatic path treats as "everything else" and loads eagerly at any size — the
+  150,000-row rule it documents covers pandas, polars and Arrow inputs only.
 - **`st.cache_resource(max_entries=1)`** keeps exactly one multi-gigabyte model resident, so pointing
   the app at another repo evicts rather than accumulates.
 - **`.streamlit/config.toml` ships no `[theme]` block, on purpose.** As of 1.62.0, Streamlit offers

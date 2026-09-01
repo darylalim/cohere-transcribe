@@ -24,7 +24,15 @@ dependencies = [
     # transcribe. The extra exists as far back as 0.4.4, so this states the requirement
     # without moving the floor. Nothing in CI would catch its absence: `test` never
     # imports mlx_audio and `check` runs check_decoding, which needs no model.
-    "mlx-audio[stt]>=0.4.4",
+    #
+    # The ceiling is that same argument one level up. `_patch_vad_dtype` wraps a
+    # private method and reproduces its signature, and its no-op guard covers only
+    # `_segment_with_vad` being *removed* -- a kept-but-changed signature, say
+    # `max_chunk_s` renamed or folded into a config object, walks straight past the
+    # guard and raises TypeError on every vad=True call. 0.4.7 and 0.5.1 are the two
+    # releases that shim has actually been checked against, so the range stops where
+    # the checking does rather than where the API happens to still work.
+    "mlx-audio[stt]>=0.4.4,<0.6",
     "numpy>=2.0",
 ]
 

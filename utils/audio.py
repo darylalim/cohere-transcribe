@@ -49,7 +49,7 @@ def preview_mime(filename: str) -> str:
     return PREVIEW_MIME.get(filename.rsplit(".", 1)[-1].lower(), "audio/wav")
 
 
-def _decode_with_ffmpeg(data: bytes) -> np.ndarray:
+def _decode_with_ffmpeg(data: bytes, name: str = "") -> np.ndarray:
     """Decode audio mlx-audio could not handle, to mono 16 kHz float32.
 
     Covers two gaps. mlx-audio picks a decoder from magic bytes and has no
@@ -67,10 +67,22 @@ def _decode_with_ffmpeg(data: bytes) -> np.ndarray:
     ``0xFFFFFFFF`` placeholder. Raw PCM has no header to misparse.
     """
     if shutil.which("ffmpeg") is None:
+        # The "convert it" half was unconditional until mlx-audio 0.5.1 put a
+        # scipy resampler on the miniaudio path: a wav, mp3 or flac upload can now
+        # arrive here too, when that import or the FIR itself fails, and telling
+        # someone to convert a WAV into a WAV is advice that cannot be followed.
+        # The three extensions are spelled inline rather than hoisted into a
+        # constant -- a fourth registry beside UPLOAD_TYPES, PREVIEW_MIME and
+        # check_decoding would have to be kept in step, and this sentence is the
+        # only thing that reads them.
+        convertible = (
+            ""
+            if name.lower().endswith((".wav", ".mp3", ".flac"))
+            else (", or convert the file to WAV, MP3 or FLAC first")
+        )
         raise RuntimeError(
-            "This audio format needs ffmpeg, which is not installed. "
-            "Install it with `brew install ffmpeg`, or convert the file to "
-            "WAV, MP3 or FLAC first."
+            "This audio file needs ffmpeg to decode, and ffmpeg is not installed. "
+            f"Install it with `brew install ffmpeg`{convertible}."
         )
 
     with tempfile.NamedTemporaryFile(suffix=".audio") as source:
@@ -129,7 +141,7 @@ def decode_to_mono16k(file) -> tuple[np.ndarray, float]:
     # An empty result is a failure, not silence: mlx-audio returns one instead
     # of raising when its piped ffmpeg call cannot seek. Retry before giving up.
     if waveform.size == 0:
-        waveform = _decode_with_ffmpeg(file.getvalue())
+        waveform = _decode_with_ffmpeg(file.getvalue(), getattr(file, "name", ""))
 
     if waveform.size == 0:
         raise ValueError("The audio file decoded to zero samples.")

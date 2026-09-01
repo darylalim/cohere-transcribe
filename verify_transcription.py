@@ -118,9 +118,41 @@ class _Upload(io.BytesIO):
         self.name = path.name
 
 
-def check(label: str, reference: str, model, tmp: pathlib.Path, **kwargs) -> dict:
+def _reencode(source: pathlib.Path, target: pathlib.Path, rate: int) -> pathlib.Path:
+    """Re-encode a synthesized fixture into another container and sample rate."""
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(source)]
+        + ["-ar", str(rate), "-ac", "1", str(target)],
+        check=True,
+        capture_output=True,
+    )
+    return target
+
+
+def check(
+    label: str,
+    reference: str,
+    model,
+    tmp: pathlib.Path,
+    *,
+    encode: tuple[str, int] | None = None,
+    **kwargs,
+) -> dict:
     path = tmp / f"{label}.aiff"
     synthesize(reference, path)
+
+    if encode is not None:
+        # `say` writes AIFF, which mlx-audio's magic-byte sniffer rejects outright,
+        # so every other check here decodes through the ffmpeg fallback and nothing
+        # measures the miniaudio path. That became a gap in mlx-audio 0.5.1, which
+        # put a chunked scipy polyphase FIR on it: wav, mp3 and flac now resample to
+        # different sample values than they used to, and check_decoding compares
+        # durations only -- a gain error, a phase artefact or a truncated tail all
+        # survive a duration check. Re-encoding to a container miniaudio accepts, at
+        # a rate above SAMPLE_RATE so the FIR actually runs, is what puts a WER
+        # oracle on it.
+        suffix, rate = encode
+        path = _reencode(path, tmp / f"{label}.{suffix}", rate)
 
     waveform, duration_s = decode_to_mono16k(_Upload(path))
     started = time.perf_counter()
@@ -295,6 +327,13 @@ def run(tmp: pathlib.Path) -> int:
 
     try:
         check("short", SHORT_TEXT, model, tmp)
+    except Failure as exc:
+        failures.append(exc)
+
+    # The same sentence through the other decoder. Without this row every WER
+    # number this script prints is evidence about the ffmpeg path alone.
+    try:
+        check("wav-44k", SHORT_TEXT, model, tmp, encode=("wav", 44100))
     except Failure as exc:
         failures.append(exc)
 

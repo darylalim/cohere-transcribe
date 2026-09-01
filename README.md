@@ -140,6 +140,16 @@ fails twice: `.astype(np.float32)` inside the Silero backend, then
 `utils/models._patch_vad_dtype` coerces once at that boundary. Delete it once
 mlx-audio ships a fix.
 
+**wav, mp3 and flac decode differently since mlx-audio 0.5.1.** Whenever the
+requested rate is below the file's native one, the miniaudio path now resamples
+through a chunked scipy polyphase FIR instead of miniaudio's own converter. It
+is more accurate — the old path aliased on 44.1 kHz — but it is not free: an
+hour of 48 kHz mono takes about 27 seconds to decode, against a tenth of a
+second for the same hour already at 16 kHz. Samples can also exceed ±1.0 on
+sharp transients, because the FIR runs in float32 after normalisation rather
+than in the clamped int16 domain. Nothing downstream needs them clamped. The
+other six formats go through ffmpeg and are unaffected.
+
 **mlx-audio's VAD repo is fixed at the v5 Silero port.** `get_backend()` in
 `cohere_asr/vad.py` hardcodes `mlx-community/silero-vad`, and `generate` takes
 no argument that reaches it. `utils/models._pin_vad_repo` seeds that per-model

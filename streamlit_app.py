@@ -323,41 +323,42 @@ if result:
             )
 
         if len(result.segments) > 1:
-            # on_change="rerun" is what makes `.open` mean anything; the default
-            # computes and ships expander contents whether or not it is open. VAD
-            # splits per speech run rather than per 35-second window, so a long
-            # meeting is thousands of rows Arrow-serialised on every rerun for a
-            # section nobody expanded.
+            # `lazy=True`, not a hand-rolled gate. st.expander computes and ships
+            # its contents whether or not it is open, and VAD splits per speech run
+            # rather than per 35-second window, so a long meeting used to be
+            # thousands of rows Arrow-serialised on every rerun for a section nobody
+            # expanded. Lazy loading holds them in the app server and sends only the
+            # rows in view.
             #
-            # Only above a threshold, though, because the saving is not free: with
-            # on_change="rerun" every open and close becomes a full script rerun,
-            # the same cost on_click="ignore" removes from the buttons above. A 90
-            # second clip is ~3 chunks, where a rerun per toggle buys nothing. 100
-            # rows is roughly an hour of long-form chunking, past which the table
-            # stops being incidental and the trade inverts.
-            lazy = len(result.segments) > 100
-            segments = st.expander(
-                f"{len(result.segments)} chunks",
-                icon=":material/segment:",
-                on_change="rerun" if lazy else "ignore",
-            )
-            if segments.open or not lazy:
-                with segments:
-                    st.caption(
-                        "Chunk boundaries from long-form splitting, not word-level "
-                        "alignment. The model does not produce timestamps or speaker "
-                        "labels."
-                    )
-                    st.dataframe(
-                        result.segments,
-                        hide_index=True,
-                        key="segments",
-                        column_order=["start", "end", "text"],
-                        column_config={
-                            "start": st.column_config.NumberColumn(
-                                "Start", format="%.1fs"
-                            ),
-                            "end": st.column_config.NumberColumn("End", format="%.1fs"),
-                            "text": st.column_config.TextColumn("Text", width="large"),
-                        },
-                    )
+            # This replaces `on_change="rerun"` plus a `.open` guard and a 100-row
+            # threshold, which bought the same saving by spending a full script rerun
+            # on every open and close -- the cost `on_click="ignore"` removes from the
+            # buttons just above. Streamlit applies its own 1000-row floor instead:
+            # below it rows load eagerly whatever this says, so ordinary results keep
+            # the built-in search and CSV download that lazy loading does not support,
+            # and only tables past that floor trade them away.
+            #
+            # `lazy=None` would not do it. `result.segments` is a list[dict], which
+            # the automatic path treats as "everything else" and loads eagerly at any
+            # size; the 150,000-row rule it documents covers pandas, polars and Arrow
+            # inputs only.
+            with st.expander(
+                f"{len(result.segments)} chunks", icon=":material/segment:"
+            ):
+                st.caption(
+                    "Chunk boundaries from long-form splitting, not word-level "
+                    "alignment. The model does not produce timestamps or speaker "
+                    "labels."
+                )
+                st.dataframe(
+                    result.segments,
+                    lazy=True,
+                    hide_index=True,
+                    key="segments",
+                    column_order=["start", "end", "text"],
+                    column_config={
+                        "start": st.column_config.NumberColumn("Start", format="%.1fs"),
+                        "end": st.column_config.NumberColumn("End", format="%.1fs"),
+                        "text": st.column_config.TextColumn("Text", width="large"),
+                    },
+                )
