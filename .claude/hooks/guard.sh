@@ -43,7 +43,20 @@ RE_INSTALL='(^|[;&|(`[:space:]])(uv[[:space:]]+pip[[:space:]]+(install|sync)|([.
 # sanctioned path, and the install deny above points at it -- but a human should
 # see mlx-audio being allowed to move.
 RE_RELOCK_ADD='(^|[;&|[:space:]])uv[[:space:]]+(add|remove)([[:space:]]|$)'
-RE_RELOCK_UP='(^|[;&|[:space:]])uv[[:space:]]+(lock|sync)[^;&|]*(--upgrade|-U)([[:space:]]|$)'
+# `--upgrade-package` and its short form `-P`, not just `--upgrade`/`-U`. The
+# trailing ([[:space:]]|$) meant the hyphen in `uv lock --upgrade-package
+# mlx-audio` failed the match -- so the single most precise way to move exactly
+# the dependency this rule names in its own reason string was the one spelling
+# it could not see, and a reader following CLAUDE.md reaches for it first.
+RE_RELOCK_UP='(^|[;&|[:space:]])uv[[:space:]]+(lock|sync)[^;&|]*(--upgrade(-package)?|-[UP])([[:space:]]|$)'
+# The Edit/Write ask below gates the lockfile against the file tools. Nothing
+# gated the same act spelled as a shell command, and two spellings reach a
+# re-resolved mlx-audio without going through `uv add` at all: `rm uv.lock &&
+# uv sync` deletes the pin instead of raising it, and an in-place `sed` edits it
+# where the Edit tool would have prompted. preflight.sh already treats a missing
+# uv.lock as a reportable condition, so the repo agreed that state was dangerous
+# while leaving the command that produces it ungated.
+RE_LOCK_WRITE='((^|[;&|[:space:]])(rm|unlink|mv|truncate|tee|sed)[^;&|]*uv\.lock|>[[:space:]]*uv\.lock)'
 # Only an actual run. Matching the bare filename made `ruff check
 # verify_transcription.py` -- the lint command CLAUDE.md prescribes -- prompt with
 # a 4 GB download warning, which is how a real run gets waved through.
@@ -101,6 +114,10 @@ case "$tool" in
 
     if [[ "$cmd" =~ $RE_INSTALL ]]; then
       decide deny "That installs outside the lockfile. uv.lock is what pins mlx-audio 0.5.1, which _patch_vad_dtype targets; 'uv pip install' and plain 'pip' both ignore it. Use 'uv sync'."
+    fi
+
+    if [[ "$cmd" =~ $RE_LOCK_WRITE ]]; then
+      decide ask "That rewrites or deletes uv.lock from the shell, which the Edit/Write gate below does not see. uv.lock is the only thing pinning mlx-audio to the 0.5.1 internals _patch_vad_dtype targets -- pyproject.toml asks merely for >=0.4.4, so a fresh resolve after this is unconstrained."
     fi
 
     if [[ "$cmd" =~ $RE_RELOCK_ADD ]] || [[ "$cmd" =~ $RE_RELOCK_UP ]]; then
