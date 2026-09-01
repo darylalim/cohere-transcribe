@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # SessionStart: name the environmental preconditions this app fails on, before a
-# transcription stalls on one. Two of this project's failure modes are
-# environmental rather than code: a missing ffmpeg (which silently narrows
-# UPLOAD_TYPES to wav/mp3/flac) and a machine MLX cannot run on. The jq probe
-# below is a different kind -- not a precondition of the app, but of the hooks
-# checking it.
+# transcription stalls on one. Four probes, in two kinds. Three are the app's:
+# a missing ffmpeg (which silently narrows UPLOAD_TYPES to wav/mp3/flac), a
+# machine MLX cannot run on, and a missing uv.lock (which lets `uv sync` resolve
+# mlx-audio fresh against a floor of >=0.4.4). The fourth, jq, is a precondition
+# of the hooks doing the checking rather than of the app being checked, which is
+# why it runs first. Keep this count and this list in step with the probes below
+# and with the line naming them in CLAUDE.md.
 #
 # Runs synchronously and prints plain text, which is what reaches Claude on
 # SessionStart. It was async, which delivers stdout through a JSON payload path
