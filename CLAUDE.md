@@ -197,13 +197,19 @@ round trip.
 - **`edit-checks.sh`** (PostToolUse) — ruff format applied, ruff check and ty reported. It is the
   only in-session checker. `exit 2` is advisory here and blocking on `Stop`, which is why ty sits in
   this hook and not in a gate.
-- **`preflight.sh`** (SessionStart) — ffmpeg, Apple Silicon, `uv.lock`. Prints nothing when all
-  three hold, so it costs a line of output only when it has one to give. It probed for HF
+- **`preflight.sh`** (SessionStart) — jq, ffmpeg, Apple Silicon, `uv.lock`. Prints nothing when all
+  four hold, so it costs a line of output only when it has one to give. It probed for HF
   credentials until that failed the same test the `uvx ruff` rule failed: `load_asr` matches
   `GatedRepoError` by type and raises `ModelAccessError`, three numbered steps ending in
   `hf auth login`, on screen at the moment it matters. The probe restated that to Claude at
   session start — and its remediation string said `uv run hf auth login`, the relock the same
   file's header calls its reason for keeping every probe local.
+  jq is the odd one out — a precondition of the hooks rather than of the app, and the most silent
+  thing here: `guard.sh` parses its payload with it, so without jq `$tool` is empty, no `case` arm
+  matches, and the script reaches `exit 0` — which a PreToolUse hook cannot distinguish from "looked,
+  no objection". Every rule in the file abstains at once. It is probed rather than enforced in
+  `guard.sh` because an `exit 2` there blocks `brew install jq`, blocks reading `guard.sh` and blocks
+  editing `settings.json`.
 
 A `Stop` gate running repo-wide ruff was deleted rather than kept: ruff's rules are per-file, so a
 repo sweep found nothing `edit-checks.sh` had not already reported on the file Claude wrote, and the

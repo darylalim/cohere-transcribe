@@ -2,7 +2,9 @@
 # SessionStart: name the environmental preconditions this app fails on, before a
 # transcription stalls on one. Two of this project's failure modes are
 # environmental rather than code: a missing ffmpeg (which silently narrows
-# UPLOAD_TYPES to wav/mp3/flac) and a machine MLX cannot run on.
+# UPLOAD_TYPES to wav/mp3/flac) and a machine MLX cannot run on. The jq probe
+# below is a different kind -- not a precondition of the app, but of the hooks
+# checking it.
 #
 # Runs synchronously and prints plain text, which is what reaches Claude on
 # SessionStart. It was async, which delivers stdout through a JSON payload path
@@ -28,6 +30,28 @@ set -uo pipefail
 
 root="${CLAUDE_PROJECT_DIR:-.}"
 notes=()
+
+# jq before the app's own preconditions, because it is the one the hooks rest on
+# and its absence is more silent than anything below. guard.sh parses its payload
+# with jq, so without it `$tool` is empty, the case matches no arm, and the
+# script reaches `exit 0` -- and a PreToolUse hook that exits 0 with empty stdout
+# is protocol-indistinguishable from one that looked and had no objection. Every
+# deny and ask in the file abstains at once, with nothing said anywhere;
+# edit-checks.sh goes quiet the same way, its file= coming back empty and failing
+# the *.py test. Measured with jq off PATH: an out-of-lockfile install, a
+# credential read and a verify_transcription.py run all returned rc=0 and no
+# decision, leaving only a `jq: command not found` on the stderr of an exit-0
+# hook, which is not surfaced the way exit 2 is.
+#
+# Probed here rather than failed closed inside guard.sh. `decide` builds its JSON
+# with jq, so failing closed there would have to printf the object by hand -- and
+# an `exit 2` at the top of guard.sh blocks `brew install jq`, blocks reading
+# guard.sh and blocks editing settings.json, which is an unrecoverable session
+# traded for a binary macOS ships at /usr/bin. Advisory at session start is the
+# proportionate answer; it also covers edit-checks.sh, which no guard-side check
+# would have.
+command -v jq >/dev/null \
+  || notes+=("jq is not on PATH -- guard.sh and edit-checks.sh both parse their payload with it, and both exit 0 having checked nothing when it is missing, saying so nowhere. 'brew install jq'.")
 
 command -v ffmpeg >/dev/null \
   || notes+=("ffmpeg is not on PATH -- of the formats in UPLOAD_TYPES only wav, mp3 and flac will decode. 'brew install ffmpeg'.")
