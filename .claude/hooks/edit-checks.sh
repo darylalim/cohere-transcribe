@@ -10,8 +10,26 @@
 set -uo pipefail
 
 root="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+
+# Fail closed when lib.sh cannot be sourced, rather than checking nothing and
+# saying so nowhere. `set -u` is on but `set -e` is not, so a failed source used
+# to fall straight through to `tooling_reachable "$RUFF" || exit 0` below -- an
+# undefined command, so the `||` fired and the hook exited 0 having formatted
+# nothing and reported nothing. Measured: rc=0 with the dirty file byte-identical,
+# against rc=2 and an F401 report with lib.sh in place. The `command not found`
+# lines bash prints land on stderr of an exit-0 hook, which is not surfaced the
+# way exit 2 is, so the only in-session checker went quiet without a word. That
+# is the same succeeds-while-being-wrong shape guard.sh exists to catch, living
+# inside the hooks themselves -- and it is far more reachable than the jq both
+# hooks parse their payload with, since lib.sh is a repo file one rename or bad
+# merge away rather than an OS binary at /usr/bin.
+lib="$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib.sh
-source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+source "$lib" || {
+  printf 'edit-checks.sh: cannot source %s -- ruff and ty did NOT run on this edit.\n' "$lib" >&2
+  exit 2
+}
 
 payload=$(cat)
 file=$(jq -r '.tool_input.file_path // empty' <<<"$payload")
