@@ -148,13 +148,44 @@ is also what keeps the file inside the ubuntu `test` job's charter.
 
 ### CI
 
-`.github/workflows/ci.yml` adds no tests; it runs the ones already here. Four jobs: `lint` on ubuntu
+`.github/workflows/ci.yml` adds no tests; it runs the ones already here. Five jobs: `lint` on ubuntu
 (ruff and shellcheck, both pinned, and no `uv sync` — it needs none), `test` on ubuntu (`uv sync --locked` and pytest),
-`check` on macos-15 (`uv sync --locked`, ty, and the decode matrix), and `integration`, which runs the
+`check` on macos-15 (`uv sync --locked`, ty, and the decode matrix), `integration`, which runs the
 whole script against real weights and is `workflow_dispatch` only — gated weights plus GitHub
-withholding secrets from fork pull requests mean it can never be a required check. It needs an
+withholding secrets from fork pull requests mean it can never be a required check — and `release`,
+which is the only job that writes anything outward-facing. It needs an
 `HF_TOKEN` repository secret; `huggingface_hub` reads that env var directly, so CI needs no
 `hf auth login`.
+
+### Releases
+
+`release` publishes a GitHub Release whenever `[project] version` in `pyproject.toml` names a tag that
+does not exist yet. Push to main only, gated on `lint`, `test` and `check` all three, and it tags
+`v${version}` at the commit those three passed rather than at whatever main points to when it runs.
+Nothing about it is opt-in: bumping the version *is* the release, so a bump landing in a commit meant
+as a work in progress publishes one. **The first push to main after this job exists will cut `v0.1.0`**,
+because 0.1.0 is what `pyproject.toml` says and no tag has ever existed here.
+
+Four decisions in it are load-bearing:
+
+- **Detection is state-based, not a diff.** It reads the version and asks whether that tag exists,
+  rather than diffing `pyproject.toml` against the previous commit. Only one run in the push
+  concurrency group is pending at a time and a newer push replaces it, so a bump can lose the run it
+  arrived on — and the version lives in the file rather than in the commit, so the surviving run reads
+  the same bumped value and releases anyway. A diff against `HEAD~1` drops it silently. This is also
+  why `queue: max` is *not* on the concurrency block: it would fix a problem this design does not
+  have, and `queue: max` alongside `cancel-in-progress: true` is a workflow validation error — that
+  key is an expression here which is `true` on every pull request, so adding it turns every pull
+  request red.
+- **`permissions: contents: write` is job-level and must stay there.** Widening the workflow block
+  hands write to `integration`, the one job holding `HF_TOKEN`, and to the three running
+  uvx-downloaded third-party tools beside a checkout that persists credentials by default.
+- **The version is read with `tomllib`, not `sed`.** `version` is a common key; a line-anchored `sed`
+  would tag whatever a future `[tool.*]` table happened to declare. The value is then rejected unless
+  it is entirely PEP 440's alphabet, because it becomes a git ref and a `gh` argument and a newline
+  in it would reach `gh release create` as a second argument.
+- **Notes come from `git log`, not `--generate-notes`.** The generated body is built from merged pull
+  requests, and every commit here lands on main directly, so it would be a bare compare link.
 
 No step in it is verdict-neutral. That is the rule for adding one, and four were removed or rewired
 under it: `lint` had its own `uv lock --check`, which asserts exactly what `--locked` already asserts

@@ -327,3 +327,109 @@ jobs:
       # download this manually-triggered job performs a handful of times a year.
       - name: verify_transcription.py
         run: uv run --locked verify_transcription.py
+
+  release:
+    # A version bump in pyproject.toml is the trigger, and the tag is cut from
+    # the commit that carried it. Push to main only: a pull_request run has
+    # nothing to tag, and workflow_dispatch is the integration job's door.
+    #
+    # Gated on all three checks rather than the lint+test pair `integration`
+    # settles for. `check` is twenty-five seconds and is the only run of ty and
+    # of the nine-format decode matrix anywhere, and a published tag is the one
+    # thing this repo produces that clones pick up within seconds of it
+    # existing -- so it must not outrun the job that decodes every format the
+    # uploader advertises. A failed or skipped `needs` skips this job, which is
+    # the behaviour wanted: no green tag on a red commit.
+    name: release (tag and publish)
+    needs: [lint, test, check]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Job-level, and never the workflow block. Widening `permissions:` at the top
+    # would hand contents: write to `integration`, the one job holding HF_TOKEN,
+    # and to the three that run uvx-downloaded third-party tools in the same
+    # process tree as a checkout that persists credentials by default.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The default fetch-depth: 1 arrives with no history and no tags, and
+          # this job needs both -- the tag list is what decides whether the
+          # version has already been released, and the notes are the commit
+          # range since the previous tag. fetch-tags is stated rather than left
+          # to follow from fetch-depth: 0, because which of the two actually
+          # brings tags down has moved across checkout releases and the failure
+          # is silent in the worst direction: no tags reads as "never released"
+          # and re-cuts a release on every push.
+          fetch-depth: 0
+          fetch-tags: true
+
+      # One step on purpose. Splitting the version read from the release would
+      # need a step output and an `if:` on the second half to say what `exit 0`
+      # says here in one line.
+      #
+      # Detection is state-based -- read the version, ask whether that tag
+      # exists -- rather than a diff of pyproject.toml against the previous
+      # commit. Only one run in the push concurrency group is pending at a time,
+      # and a newer push cancels and replaces it, so a bump can lose the run it
+      # arrived on. The version lives in the file rather than in the commit, so
+      # the surviving run reads the same bumped value and cuts the release
+      # anyway. A diff against HEAD~1 would have dropped it silently.
+      - name: Tag and publish on a version bump
+        env:
+          # gh reads GH_TOKEN. Kept in `env:` rather than expanded in the body:
+          # no ${{ }} appears inside a `run:` anywhere in this workflow, which is
+          # what makes every one of them injection-free by construction.
+          #
+          # A tag pushed by GITHUB_TOKEN starts no further workflow run. Nothing
+          # here triggers on `release` or on tags, so that is the wanted
+          # behaviour rather than a limitation -- but it is why a future
+          # publish-on-release job would need a PAT.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # tomllib, not sed: `version` is a common key, and [tool.ruff] or a
+          # future [tool.*] table carrying one would have a line-anchored sed
+          # tagging the wrong string. This reads [project].version or fails.
+          version=$(python3 -c 'import tomllib;print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
+
+          # The value is about to become a git ref and a gh argument. Anything
+          # outside PEP 440's alphabet is malformed; a newline is the one that
+          # would be interesting.
+          case "${version}" in
+            '' | *[!0-9A-Za-z.-]*)
+              echo "::error::[project] version is not a usable tag name: ${version}"
+              exit 1
+              ;;
+          esac
+
+          tag="v${version}"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "${tag} is already tagged; pyproject.toml carries no new version"
+            exit 0
+          fi
+
+          # git log rather than --generate-notes, which builds its body from
+          # merged pull requests. Every commit here lands on main directly, so
+          # the generated body would be a bare compare link and nothing else.
+          previous=$(git tag --list 'v*' --sort=-v:refname | head -1)
+          notes="${RUNNER_TEMP}/notes.md"
+          if [ -n "${previous}" ]; then
+            git log --no-merges --reverse --format='- %s' "${previous}..HEAD" >"${notes}"
+          else
+            git log --no-merges --reverse --format='- %s' >"${notes}"
+          fi
+
+          # --target pins the release to the commit the three jobs above passed,
+          # not to wherever main has moved while this job queued.
+          #
+          # A version carrying anything but digits and dots is a prerelease, and
+          # GitHub never marks a prerelease as Latest -- so --prerelease and
+          # --latest are exclusive here rather than a pair to keep in step.
+          args=(--target "${GITHUB_SHA}" --title "${tag}" --notes-file "${notes}")
+          case "${version}" in
+            *[!0-9.]*) args+=(--prerelease) ;;
+            *) args+=(--latest) ;;
+          esac
+
+          gh release create "${tag}" "${args[@]}"
