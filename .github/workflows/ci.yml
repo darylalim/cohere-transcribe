@@ -367,6 +367,7 @@ jobs:
           # silent in the worst direction: no tags reads as "first release ever"
           # and re-lists the whole history in the notes.
           fetch-depth: 0
+          fetch-tags: true
           # This is the one job holding contents: write, and the argument for
           # keeping that off the workflow block is partly that checkout persists
           # credentials by default -- so it must not persist them here either.

@@ -5,9 +5,11 @@ description = "Streamlit application for transcription using Cohere Transcribe o
 license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
-    # 1.61, not 1.57: `icon=` on st.metric lands there, and the metrics row passes
-    # it. Established by resolving every `st.*` call the app makes against clean
-    # 1.57/1.58/1.59/1.60 installs, where that one argument is the only casualty.
+    # 1.61, not 1.57: `icon=` on st.metric and `lazy=` on st.dataframe both land
+    # there, and the metrics row and the chunk table pass them. Established by
+    # resolving every `st.*` call the app makes against clean 1.57/1.58/1.59/1.60
+    # installs, where those two arguments are the only casualties -- so dropping
+    # one of them is not enough to lower the floor.
     # uv.lock pins 1.62.0, so a floor that undershoots is invisible to `uv sync
     # --locked` and to CI -- it only breaks whoever resolves from this file alone.
     "streamlit>=1.61",
@@ -26,10 +28,12 @@ dependencies = [
     # imports mlx_audio and `check` runs check_decoding, which needs no model.
     #
     # The ceiling is that same argument one level up. `_patch_vad_dtype` wraps a
-    # private method and reproduces its signature, and its no-op guard covers only
-    # `_segment_with_vad` being *removed* -- a kept-but-changed signature, say
-    # `max_chunk_s` renamed or folded into a config object, walks straight past the
-    # guard and raises TypeError on every vad=True call. 0.4.7 and 0.5.1 are the two
+    # private method, and its no-op guard covers only `_segment_with_vad` being
+    # *removed*. A kept-but-changed signature walks straight past that guard, and the
+    # wrapper forwards *args/**kwargs untouched, so it raises nothing: `max_chunk_s`
+    # renamed or folded into a config object reaches upstream intact while the
+    # wrapper's own kwargs.get("max_chunk_s", 30.0) falls back to 30 s and caps every
+    # VAD chunk at a window the caller never asked for. 0.4.7 and 0.5.1 are the two
     # releases that shim has actually been checked against, so the range stops where
     # the checking does rather than where the API happens to still work.
     "mlx-audio[stt]>=0.4.4,<0.6",

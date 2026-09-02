@@ -10,3 +10,11 @@
 [server]
 # An hour of 48 kHz stereo WAV runs well past Streamlit's 200 MB default.
 maxUploadSize = 1000
+
+[browser]
+# Defaults to true, and the app's own source never shows it: the flag is shipped to
+# the frontend, whose MetricsManager GETs an endpoint from data.streamlit.io -- a
+# third-party webhook today -- and POSTs events there from the browser. So "audio
+# never leaves the machine, the only network calls are weight downloads" is true of
+# this app only with this line in it.
+gatherUsageStats = false

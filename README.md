@@ -43,7 +43,7 @@ The first transcription downloads ~4 GB of weights into `~/.cache/huggingface`.
 
 ## Verify
 
-Two layers. The fast one needs nothing installed beyond `uv sync`:
+Three layers. The fast two need nothing installed beyond `uv sync`:
 
 ```bash
 uv run pytest
@@ -56,6 +56,11 @@ model, no audio, no network; it runs in well under a second. It is also the only
 check here that runs on Linux, though `uv sync` still has to succeed first — so
 in practice that means Apple Silicon or Linux, as mlx publishes no Intel-macOS
 wheel.
+
+The same command also runs `tests/test_smoke.py`, which covers the two things that
+fall between the layers and still need no model: that the `[stt]` extra put
+`sentencepiece` in the environment, and that `streamlit_app.py` renders — bare,
+and again with a finished transcript seeded into session state.
 
 The slow one needs weights:
 
@@ -183,6 +188,7 @@ utils/models.py            checkpoint registry, language table, cached loader,
                            mlx-audio VAD shim
 verify_transcription.py    integration test against known ground truth
 tests/test_pure.py         unit tests for the pure functions — no model needed
+tests/test_smoke.py        sentencepiece is installed; the app renders
 ```
 
 ## License

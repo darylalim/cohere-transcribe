@@ -21,7 +21,7 @@
 # The local HF-credential probe that replaced it is gone too, for the other
 # reason a probe leaves: a missing token is not silent. load_asr matches
 # GatedRepoError by type -- never by "401" in the message -- and raises
-# ModelAccessError, whose text is three numbered steps ending in `hf auth login`,
+# ModelAccessError, whose text is three numbered steps whose middle one is `hf auth login`,
 # put on screen by streamlit_app.py at the moment it matters, to the person who
 # can act on it. Restating that at session start bought a turn at most. It also
 # carried the contradiction: its remediation string said `uv run hf auth login`,

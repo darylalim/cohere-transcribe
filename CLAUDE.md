@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A single-page Streamlit app that runs [Cohere Transcribe 03-2026](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026)
 — a 2B-parameter ASR model — locally on Apple Silicon through `mlx-audio`. Audio never leaves the
 machine; the only network calls are Hugging Face weight downloads — the checkpoint, plus 1.2 MB of
-Silero the first time VAD is switched on. Five Python files, no framework
-beyond Streamlit.
+Silero the first time VAD is switched on. Six Python source files plus an empty
+`utils/__init__.py`, no framework beyond Streamlit.
 
 ## Commands
 
@@ -36,6 +36,13 @@ the committed `uv.lock` entirely. That distinction is load-bearing here: `_patch
 `[build-system]` on purpose — uv then treats the project as non-packaged and installs just the
 dependencies, which is what the app wants, since it runs as scripts from the repo root and imports
 `utils` relative to cwd.
+
+`pytest` and `watchdog` sit in `[dependency-groups] dev`, which `uv sync` installs by default —
+`--no-dev` leaves `uv run pytest` with no runner, though `verify_transcription.py` imports nothing
+from the group and still runs. `watchdog` is the one that looks
+deletable: nothing here imports it, so ruff, ty and pytest all stay green without it, while
+Streamlit's file watcher drops from FSEvents to polling every source file on a timer, which is what
+the "install the Watchdog module" notice at startup is about.
 
 ruff and ty are not project dependencies — run them through `uvx`. Both currently pass clean, as does
 `ruff format --check`. `required-version` in `pyproject.toml` pins ruff to 0.16.1, so an unpinned
@@ -130,11 +137,12 @@ construction — so it is untested on purpose rather than by oversight.
 **`tests/test_smoke.py` — no model either, and no pure functions.** Two things that fall between the
 layers above. Both are cheap, and both were invisible to every job that runs on push.
 
-- **`sentencepiece` is present.** The `[stt]` extra is the only thing naming it, and the failure its
-  absence causes is silent in the worst possible place: `CohereAsrTokenizer.__init__` imports it from
-  a `post_load_hook` that runs *after* `load_weights(strict=True)` has passed, so the whole download
-  and the whole integrity check succeed first. `find_spec` rather than an import, because the
-  question is whether `uv sync` put it in the environment.
+- **`sentencepiece` is present.** The `[stt]` extra is the only thing naming it, and its absence
+  surfaces four gigabytes in, *after* `load_weights(strict=True)` has already passed — the
+  `mlx-audio[stt]` bullet under Load-bearing decisions carries the mechanism and the reason no CI
+  job catches it. Stated once there rather than twice, so a change upstream has one place to land.
+  `find_spec` rather than an import, because the question is whether `uv sync` put it in the
+  environment.
 - **`streamlit_app.py` actually runs.** Nothing else executes it — `test_pure.py` imports only
   `utils`, ruff and ty are static, and `check_decoding` stops at `utils/`. It runs twice: once bare,
   and once with a `Transcript` seeded into session state, because `streamlit_app.py:28` gates the
@@ -157,14 +165,24 @@ which is the only job that writes anything outward-facing. `integration` needs a
 `HF_TOKEN` repository secret; `huggingface_hub` reads that env var directly, so CI needs no
 `hf auth login`.
 
+The concurrency group is keyed on the pull request *number* and on `github.event_name`, not the
+usual `github.ref` one-liner, and both halves earn their place: `head_ref` is a bare branch name, so
+two pull requests from different forks both using `patch-1` would share a group and cancel each
+other, and without `event_name` a hand-dispatched `integration` run joins the push group, where the
+next push replaces it while it is still queued. `cancel-in-progress` is false for a push, so
+nothing mid-run is at risk — but the request is gone, and only another dispatch brings it back,
+never a re-push.
+
 ### Releases
 
 `release` publishes a GitHub Release whenever `[project] version` in `pyproject.toml` names a version
 that has not been released yet. Push to main only, gated on `lint`, `test` and `check` all three, and it tags
 `v${version}` at the commit those three passed rather than at whatever main points to when it runs.
 Nothing about it is opt-in: bumping the version *is* the release, so a bump landing in a commit meant
-as a work in progress publishes one. **The first push to main after this job exists will cut `v0.1.0`**,
-because 0.1.0 is what `pyproject.toml` says and no tag has ever existed here.
+as a work in progress publishes one. That is not hypothetical: `v0.1.0` was cut at f3f42bb, the push
+that shipped and then fixed this job. `pyproject.toml` still names 0.1.0, so the next push to main
+will reach the `gh release view` gate and exit reporting "already released" — a further release
+needs a version bump, and that bump alone is the whole ceremony.
 
 Four decisions in it are load-bearing:
 
@@ -231,9 +249,9 @@ Two consequences worth knowing before editing anything:
 - **The lint job is where repo-wide ruff lives now, not a mirror of a hook that also does it.** It
   reads the ruff version out of `required-version` exactly as `.claude/hooks/lib.sh` does, and every
   check runs under `if: !cancelled()` so a formatting slip cannot stop `ruff check` from running —
-  the same short-circuit b06c493 removed from the `Stop` hook that has since been deleted for
-  duplicating this job. ruff blocks and ty is advisory there for the same reasons it draws that line
-  here.
+  the same short-circuit the since-deleted `Stop` hook had to have removed from it, which is why it
+  is stated here rather than left to the default. ruff blocks and ty is advisory there for the same
+  reasons it draws that line here.
 
 ## Hooks
 
@@ -244,15 +262,25 @@ anything says why. A rule rejecting an unpinned `uvx ruff` was removed under tha
 `required-version` itself and aborts with the whole diagnosis in the error, so the hook bought one
 round trip.
 
+The wiring lives in `.claude/settings.json`, and it is half of every rule here: `guard.sh` is
+attached to the matcher `Bash|Edit|Write|Read` and `edit-checks.sh` to `Edit|Write`, so a `case` arm
+added to `guard.sh` for a tool outside that list is never reached — the hook is not invoked at all,
+which is the missing-`jq` failure below with nothing on stderr to show for it. Admitting a rule is
+two edits, not one. The timeouts are the same kind of quiet: `edit-checks.sh` gets 60 seconds
+because a cold `uvx` spends most of one resolving ruff and then ty, and `guard.sh` gets 10 because
+every gated tool call waits on it. `lib.sh` is the fourth file in `.claude/hooks/` and not a fourth
+hook — it is sourced by `edit-checks.sh`, never executed, and registers nowhere.
+
 - **`guard.sh`** (PreToolUse) — `deny` where the operation is always wrong here, `ask` where a human
   should decide. The reason strings are the point; they reach Claude verbatim.
 - **`edit-checks.sh`** (PostToolUse) — ruff format applied, ruff check and ty reported. It is the
-  only in-session checker. `exit 2` is advisory here and blocking on `Stop`, which is why ty sits in
-  this hook and not in a gate.
+  only in-session checker. `exit 2` is advisory on `PostToolUse` and blocking on `Stop`, which is why
+  ty sits in this hook and not in a gate — and, for the reason below, why no `Stop` hook is
+  registered here at all.
 - **`preflight.sh`** (SessionStart) — jq, ffmpeg, Apple Silicon, `uv.lock`. Prints nothing when all
   four hold, so it costs a line of output only when it has one to give. It probed for HF
   credentials until that failed the same test the `uvx ruff` rule failed: `load_asr` matches
-  `GatedRepoError` by type and raises `ModelAccessError`, three numbered steps ending in
+  `GatedRepoError` by type and raises `ModelAccessError`, three numbered steps whose middle one is
   `hf auth login`, on screen at the moment it matters. The probe restated that to Claude at
   session start — and its remediation string said `uv run hf auth login`, the relock the same
   file's header calls its reason for keeping every probe local.
@@ -278,7 +306,7 @@ utils/models.py            checkpoint registry, language table, cached loader, m
 verify_transcription.py    integration test against known ground truth
 tests/test_pure.py         unit tests for the pure functions, and for the test oracle above
 tests/test_smoke.py        sentencepiece is installed; streamlit_app.py renders, empty and seeded
-.streamlit/config.toml     the 1000 MB upload ceiling, and no [theme] block on purpose
+.streamlit/config.toml     the 1000 MB upload ceiling, usage stats off, no [theme] block on purpose
 ```
 
 Flow: `UploadedFile` (or `st.audio_input`) → `decode_to_mono16k` → flat `np.float32` array at 16 kHz +
@@ -308,10 +336,12 @@ hour of 48 kHz mono measures 27 s against 0.1 s for the same hour already at 16 
 `scipy.signal` is imported on that first downsampling decode from inside `decode_to_mono16k`'s `try`,
 so a scipy that cannot import lands in the ffmpeg fallback rather than raising. `_decode_with_ffmpeg`
 is untouched — it divides int16 by 32768 and stays inside ±1.0 — so the container *and* the file's
-native rate together decide which behaviour an upload gets. Note that the WER numbers do not cover
-any of this: `verify_transcription.py` synthesizes AIFF, which miniaudio rejects outright, so every
-transcription it measures took the ffmpeg path. Only `check_decoding`'s wav, mp3 and flac rows reach
-the FIR at all, and they assert duration, never amplitude.
+native rate together decide which behaviour an upload gets. The WER numbers reach this through
+exactly one row. `say` writes AIFF, which miniaudio rejects outright, so every transcription in
+`verify_transcription.py` takes the ffmpeg path except `wav-44k`, which is re-encoded above
+`SAMPLE_RATE` precisely so the FIR runs under a WER oracle — the Testing section above carries why
+that row exists. `check_decoding`'s wav, mp3 and flac rows reach the FIR too, but assert duration,
+never amplitude.
 
 Heavy imports (`mlx_audio.stt`, `mlx_audio.audio_io`) live inside the functions that need them, so
 the sidebar renders before anything expensive happens.
@@ -340,9 +370,11 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   `mlx_audio`, and `check` runs `check_decoding`, which needs no model — only `integration` would go
   red, and that is `workflow_dispatch` only. `tests/test_smoke.py` now asserts the extra's effect
   directly, which is what turns that four-gigabyte failure into a two-second one. The `<0.6` ceiling
-  beside it is the same argument one level up: `_patch_vad_dtype` reproduces a private signature, and
-  its no-op guard covers `_segment_with_vad` being *removed*, not changed — a renamed `max_chunk_s`
-  walks straight past the guard and raises `TypeError` on every `vad=True` call. The range stops
+  beside it is the same argument one level up: `_patch_vad_dtype` wraps a private method, and its
+  no-op guard covers `_segment_with_vad` being *removed*, not changed. The wrapper forwards
+  `*args, **kwargs` untouched, so a renamed `max_chunk_s` reaches upstream intact and raises
+  nothing — while the wrapper's own `kwargs.get("max_chunk_s", 30.0)` falls back to 30 s and caps
+  every VAD chunk at a window the caller never asked for. Silent, which is why the range stops
   where the checking does.
 - **`_patch_vad_dtype()` monkeypatches the private `Model._segment_with_vad`** because that function is
   numpy code throughout while `generate` hands it an `mx.array` (mlx-audio 0.4.7 through 0.5.1, still
@@ -350,7 +382,16 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   the method disappears upstream. Its wrapper also calls `_cap_segment_length`, which is *not* part
   of the upstream bug: when Silero detects no speech it returns the whole waveform as one chunk and
   the 35-second window never applies, so an hour of room tone would reach the encoder as a single
-  ~57M-sample array. Keep the capping even if the numpy coercion becomes unnecessary.
+  ~57M-sample array. Keep the capping even if the numpy coercion becomes unnecessary. Note that the
+  wrapper caps at **30 seconds, not the 35 named elsewhere here**: those are two different windows,
+  and reconciling them is the edit to refuse. 35 is `max_audio_clip_s` off the checkpoint, which
+  `_prepare_segments` applies on the non-VAD path; 30.0 is what upstream `generate` defaults
+  `vad_max_chunk_s` to, and it is the only number the VAD path ever asked for. The `kwargs.get`
+  fallback is dead code today — upstream `generate` passes `max_chunk_s` by keyword on every call
+  (`cohere_asr.py:1158`) — so 30.0 is consulted only once that keyword is renamed, which is the
+  silent failure the `<0.6` ceiling exists to bound. Nothing here would notice: the VAD row in
+  `verify_transcription.py` is seven seconds of continuous speech, and every `_cap_segment_length`
+  unit test passes `max_chunk_s` explicitly.
 - **`_pin_vad_repo` points VAD at `VAD_REPO` by writing a private attribute.** Seeding
   `model._vad_backend` is the only opening: `_segment_with_vad` builds the backend once per instance
   through `get_backend()`, which hardcodes `mlx-community/silero-vad` (the v5 port) and takes no repo,
@@ -372,6 +413,15 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   overshoots on sharp transients, so `decode_to_mono16k` can return 1.19 where it used to return 1.0.
   The decode note under Architecture carries the measurements and the reason a clip or an amplitude
   assertion is the wrong answer: it would pass every fixture here and fire first on a real upload.
+- **`decode_to_mono16k` takes a file *object* carrying `getvalue()` and `name`**, not a path and not
+  a bare readable stream. mlx-audio's `read` accepts only `str`, `Path` or `io.BytesIO`, so an
+  ordinary `open()` handle raises `TypeError` inside the `try` for *every* format; the broad
+  `except` below turns that into an empty waveform, and the retry then calls `file.getvalue()` and
+  raises `AttributeError` — measured on all nine rows, wav included. Nothing in that chain says
+  "wrong argument type", so a caller error arrives dressed as a decode failure. That is why
+  `verify_transcription.py` carries `_Upload`, a `BytesIO` subclass with a `name`, rather than
+  opening the fixtures it just wrote. `check_decoding` now has a caller in CI, so new callers of
+  this module are a live prospect and the obvious one is a path.
 - **An empty waveform is a failure, not silence.** `decode_to_mono16k` retries through ffmpeg on
   `size == 0` and only then raises. The broad `except Exception` around `audio_read` is deliberate:
   mlx-audio raises `ValueError`, `miniaudio.DecodeError` and `RuntimeError` for the same condition.
@@ -379,6 +429,11 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   call) and below `warnings.filterwarnings` in `verify_transcription.py`. E402 is not in ruff's default
   rule set *and* `[tool.ruff.lint] extend-ignore` names it explicitly, so this passes lint — do not
   reorder.
+- **`st.segmented_control` is passed `required=True`, and the mode branch below it depends on that.**
+  A single-selection segmented control is deselectable by default: clicking the lit segment returns
+  `None`, which matches neither label, falls through to the `else` and draws the file uploader under
+  a control with nothing selected. `tests/test_smoke.py` renders the page but never clicks a widget,
+  so nothing here catches its removal.
 - **`st.audio` is passed an explicit `format=`, derived from the extension by `preview_mime`.** It
   defaults to `"audio/wav"` and nothing sniffs the container, so the bytes are served under that
   Content-Type. Eight of the nine `UPLOAD_TYPES` are not WAV, and browsers that pick a decoder from
@@ -457,7 +512,12 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   theme at all is what restores the stock pair and lets the app follow the browser. The absence is
   the decision, so it is the one thing here a reader cannot find by reading code. The same file
   raises `maxUploadSize` to 1000 MB — Streamlit's default is 200, which an hour of 48 kHz stereo WAV
-  runs well past — and that is the ceiling the `getvalue()` measurement above is taken against.
+  runs well past — and that is the ceiling the `getvalue()` measurement above is taken against. It
+  also sets `[browser] gatherUsageStats = false`, which is the one line holding "the only network
+  calls are Hugging Face weight downloads" true: the option defaults to *on*, and the frontend acts
+  on it by fetching an endpoint from `data.streamlit.io` — a third-party webhook today — and
+  POSTing events there. From the browser rather than from Python, which is why no amount of
+  reading this app's own source turns it up.
 
 ## Model limits — not missing features
 
@@ -480,11 +540,12 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   asserts the two lists stay in step, in both directions.
 - The UI uses recent Streamlit APIs deliberately (`st.segmented_control`, `st.container(horizontal=…)`,
   `width="stretch"`, `icon=` on metrics and expanders, `on_click="ignore"` on download buttons,
-  `on_change="rerun"` plus `.open` on the chunk expander). Don't substitute older equivalents. The
+  `lazy=True` on the chunk table). Don't substitute older equivalents. The
   floor in `pyproject.toml` is a checked claim rather than an assumed one: every `st.*` call the app
-  makes was resolved against clean 1.57 through 1.61 installs, and `icon=` on `st.metric` is the one
-  that moves it — it does not exist before **1.61**, while everything else here, `.open` gating
-  included, resolves as far back as 1.57. The floor read `>=1.57` for exactly that reason before
+  makes was resolved against clean 1.57 through 1.61 installs, and *two* of them move it — `icon=`
+  on `st.metric` and `lazy=` on `st.dataframe`, both landing in **1.61** — while everything else
+  here resolves as far back as 1.57. Dropping one is not enough to lower the floor; drop both, and
+  re-check rather than assume. The floor read `>=1.57` for exactly that reason before
   anyone checked: `uv.lock` pins 1.62.0, so `uv sync --locked` and all of CI install a version that
   satisfies any floor, and an undershooting one breaks only whoever resolves from `pyproject.toml`
   alone. Re-check it the same way when adding an API, rather than inferring it from a changelog.
