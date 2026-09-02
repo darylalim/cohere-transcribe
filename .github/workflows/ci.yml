@@ -81,9 +81,13 @@ jobs:
         if: ${{ !cancelled() && steps.pin.outcome == 'success' }}
         run: uvx "${RUFF}" format --check --output-format=github .
 
-      # The hooks are the one thing in this repo no checker sees.
-      # .claude/hooks/edit-checks.sh filters on *.py, so a .sh file Claude edits
-      # is checked by nothing in-session, and both ways a hook breaks are silent.
+      # The hooks are what no checker sees. .claude/hooks/edit-checks.sh filters
+      # on *.py, so a .sh file Claude edits is checked by nothing in-session, and
+      # both ways a hook breaks are silent. The glob is `.claude/hooks/*.sh` and
+      # not something wider because the only other shell here lives inside `run:`
+      # blocks, which shellcheck cannot be pointed at without lifting them into
+      # files -- the `release` job's is the one long enough for that to be a real
+      # question, and it carries `set -u` in lieu of an answer.
       #
       # A syntax error makes guard.sh return rc=2 on every payload, and since its
       # PreToolUse matcher is Bash|Edit|Write|Read it then blocks the Edit that
@@ -330,47 +334,53 @@ jobs:
 
   release:
     # A version bump in pyproject.toml is the trigger, and the tag is cut from
-    # the commit that carried it. Push to main only: a pull_request run has
-    # nothing to tag, and workflow_dispatch is the integration job's door.
+    # the commit that carried it. Push only -- a pull_request run has nothing to
+    # tag, workflow_dispatch is the integration job's door, and `on.push` is
+    # already restricted to main, so a `github.ref` conjunct here would be a
+    # condition that cannot come out false.
     #
     # Gated on all three checks rather than the lint+test pair `integration`
-    # settles for. `check` is twenty-five seconds and is the only run of ty and
-    # of the nine-format decode matrix anywhere, and a published tag is the one
-    # thing this repo produces that clones pick up within seconds of it
-    # existing -- so it must not outrun the job that decodes every format the
-    # uploader advertises. A failed or skipped `needs` skips this job, which is
-    # the behaviour wanted: no green tag on a red commit.
+    # settles for. `check` is the only run of ty and of the nine-format decode
+    # matrix anywhere, and a published tag is the one thing this repo produces
+    # that clones pick up within seconds of it existing -- so it must not
+    # outrun the job that decodes every format the uploader advertises. A
+    # failed or skipped `needs` skips this job, which is the behaviour wanted:
+    # no green tag on a red commit.
     name: release (tag and publish)
     needs: [lint, test, check]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Job-level, and never the workflow block. Widening `permissions:` at the top
     # would hand contents: write to `integration`, the one job holding HF_TOKEN,
-    # and to the three that run uvx-downloaded third-party tools in the same
-    # process tree as a checkout that persists credentials by default.
+    # and to the two that run uvx-downloaded third-party tools.
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
         with:
           # The default fetch-depth: 1 arrives with no history and no tags, and
-          # this job needs both -- the tag list is what decides whether the
-          # version has already been released, and the notes are the commit
-          # range since the previous tag. fetch-tags is stated rather than left
-          # to follow from fetch-depth: 0, because which of the two actually
-          # brings tags down has moved across checkout releases and the failure
-          # is silent in the worst direction: no tags reads as "never released"
-          # and re-cuts a release on every push.
+          # this job needs both -- `git describe` picks the notes base out of the
+          # tag list, walking ancestry. fetch-tags is stated rather than left to
+          # follow from fetch-depth: 0, because which of the two actually brings
+          # tags down has moved across checkout releases and the failure is
+          # silent in the worst direction: no tags reads as "first release ever"
+          # and re-lists the whole history in the notes.
           fetch-depth: 0
-          fetch-tags: true
+          # This is the one job holding contents: write, and the argument for
+          # keeping that off the workflow block is partly that checkout persists
+          # credentials by default -- so it must not persist them here either.
+          # Every git call below is local and `gh` authenticates from GH_TOKEN,
+          # so nothing wants a credential on disk, and a step added later cannot
+          # inherit push access it never asked for.
+          persist-credentials: false
 
       # One step on purpose. Splitting the version read from the release would
       # need a step output and an `if:` on the second half to say what `exit 0`
       # says here in one line.
       #
-      # Detection is state-based -- read the version, ask whether that tag
-      # exists -- rather than a diff of pyproject.toml against the previous
+      # Detection is state-based -- read the version, ask whether it was already
+      # released -- rather than a diff of pyproject.toml against the previous
       # commit. Only one run in the push concurrency group is pending at a time,
       # and a newer push cancels and replaces it, so a bump can lose the run it
       # arrived on. The version lives in the file rather than in the commit, so
@@ -388,14 +398,23 @@ jobs:
           # publish-on-release job would need a PAT.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # defaults.run.shell supplies -e and -o pipefail but not -u, and this
+          # block is the one piece of shell in the repo that shellcheck does not
+          # see. Unset is the failure mode that matters here: a misspelled
+          # ${previou} would expand empty, turn the range into `..HEAD`, and
+          # reshape the notes rather than raise.
+          set -u
+
           # tomllib, not sed: `version` is a common key, and [tool.ruff] or a
           # future [tool.*] table carrying one would have a line-anchored sed
           # tagging the wrong string. This reads [project].version or fails.
           version=$(python3 -c 'import tomllib;print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
 
-          # The value is about to become a git ref and a gh argument. Anything
-          # outside PEP 440's alphabet is malformed; a newline is the one that
-          # would be interesting.
+          # The tag-safe subset of PEP 440 rather than the whole of it: a local
+          # version (1.0.0+cuda) or an epoch (1!2.0) is legal there and rejected
+          # here, because neither belongs in a tag for a project that ships no
+          # package. The value becomes a git ref and a gh argument, so a newline
+          # in it is the rejection that matters.
           case "${version}" in
             '' | *[!0-9A-Za-z.-]*)
               echo "::error::[project] version is not a usable tag name: ${version}"
@@ -404,32 +423,43 @@ jobs:
           esac
 
           tag="v${version}"
-          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
-            echo "${tag} is already tagged; pyproject.toml carries no new version"
+
+          # Whether the version was *released*, not whether the ref exists. A
+          # tag left behind by a half-finished run, or kept after a release was
+          # deleted, would otherwise suppress its own release permanently --
+          # green on every push, reporting "no new version" about a version that
+          # was never published.
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            echo "${tag} is already released; pyproject.toml carries no new version"
             exit 0
           fi
 
+          # git describe, not `git tag --list --sort=-v:refname | head -1`: git's
+          # version sort ranks a prerelease above its own final release, so
+          # v0.2.0rc1 outranks v0.2.0 and the next release would re-list every
+          # commit already published in it. describe walks ancestry, which also
+          # keeps a tag from an abandoned branch out of the range.
+          #
           # git log rather than --generate-notes, which builds its body from
           # merged pull requests. Every commit here lands on main directly, so
           # the generated body would be a bare compare link and nothing else.
-          previous=$(git tag --list 'v*' --sort=-v:refname | head -1)
+          previous=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
           notes="${RUNNER_TEMP}/notes.md"
-          if [ -n "${previous}" ]; then
-            git log --no-merges --reverse --format='- %s' "${previous}..HEAD" >"${notes}"
-          else
-            git log --no-merges --reverse --format='- %s' >"${notes}"
-          fi
+          git log --no-merges --reverse --format='- %s' ${previous:+"${previous}..HEAD"} >"${notes}"
 
           # --target pins the release to the commit the three jobs above passed,
           # not to wherever main has moved while this job queued.
           #
-          # A version carrying anything but digits and dots is a prerelease, and
-          # GitHub never marks a prerelease as Latest -- so --prerelease and
-          # --latest are exclusive here rather than a pair to keep in step.
+          # No --latest: GitHub already picks Latest by date and version, and
+          # forcing it would let a corrective 0.1.1 landing after 0.2.0 demote
+          # 0.2.0 both on the release page and at /releases/latest, which is the
+          # URL a reader follows. --prerelease matches PEP 440's actual
+          # prerelease spellings rather than "contains a non-digit", so a stable
+          # post-release (1.0.0.post1) is not filed below the release it exists
+          # to supersede.
           args=(--target "${GITHUB_SHA}" --title "${tag}" --notes-file "${notes}")
           case "${version}" in
-            *[!0-9.]*) args+=(--prerelease) ;;
-            *) args+=(--latest) ;;
+            *a* | *b* | *rc* | *dev*) args+=(--prerelease) ;;
           esac
 
           gh release create "${tag}" "${args[@]}"

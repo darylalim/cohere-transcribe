@@ -153,14 +153,14 @@ is also what keeps the file inside the ubuntu `test` job's charter.
 `check` on macos-15 (`uv sync --locked`, ty, and the decode matrix), `integration`, which runs the
 whole script against real weights and is `workflow_dispatch` only — gated weights plus GitHub
 withholding secrets from fork pull requests mean it can never be a required check — and `release`,
-which is the only job that writes anything outward-facing. It needs an
+which is the only job that writes anything outward-facing. `integration` needs an
 `HF_TOKEN` repository secret; `huggingface_hub` reads that env var directly, so CI needs no
 `hf auth login`.
 
 ### Releases
 
-`release` publishes a GitHub Release whenever `[project] version` in `pyproject.toml` names a tag that
-does not exist yet. Push to main only, gated on `lint`, `test` and `check` all three, and it tags
+`release` publishes a GitHub Release whenever `[project] version` in `pyproject.toml` names a version
+that has not been released yet. Push to main only, gated on `lint`, `test` and `check` all three, and it tags
 `v${version}` at the commit those three passed rather than at whatever main points to when it runs.
 Nothing about it is opt-in: bumping the version *is* the release, so a bump landing in a commit meant
 as a work in progress publishes one. **The first push to main after this job exists will cut `v0.1.0`**,
@@ -168,24 +168,37 @@ because 0.1.0 is what `pyproject.toml` says and no tag has ever existed here.
 
 Four decisions in it are load-bearing:
 
-- **Detection is state-based, not a diff.** It reads the version and asks whether that tag exists,
-  rather than diffing `pyproject.toml` against the previous commit. Only one run in the push
+- **Detection is state-based, not a diff.** It reads the version and asks `gh release view` whether
+  that version was already released, rather than diffing `pyproject.toml` against the previous
+  commit. The question is deliberately about the release and not the tag: a tag left behind by a
+  half-finished run, or kept after a release was deleted, would otherwise suppress its own release
+  permanently — green on every push, and reporting "no new version" about one never published. Only one run in the push
   concurrency group is pending at a time and a newer push replaces it, so a bump can lose the run it
   arrived on — and the version lives in the file rather than in the commit, so the surviving run reads
   the same bumped value and releases anyway. A diff against `HEAD~1` drops it silently. This is also
   why `queue: max` is *not* on the concurrency block: it would fix a problem this design does not
-  have, and `queue: max` alongside `cancel-in-progress: true` is a workflow validation error — that
-  key is an expression here which is `true` on every pull request, so adding it turns every pull
-  request red.
+  have, and it could not go there in any case: GitHub rejects `queue: max` in the same block as
+  `cancel-in-progress: true`, and `cancel-in-progress` is an expression here that evaluates `true`
+  on every pull request. Adding the key would turn every pull request red.
 - **`permissions: contents: write` is job-level and must stay there.** Widening the workflow block
-  hands write to `integration`, the one job holding `HF_TOKEN`, and to the three running
-  uvx-downloaded third-party tools beside a checkout that persists credentials by default.
+  hands write to `integration`, the one job holding `HF_TOKEN`, and to the two that run
+  uvx-downloaded third-party tools. The same argument is why the release job's own checkout sets
+  `persist-credentials: false`: every git call in it is local and `gh` authenticates from
+  `GH_TOKEN`, so the write-scoped token has no reason to sit in `.git/config` where a step added
+  later would inherit it.
 - **The version is read with `tomllib`, not `sed`.** `version` is a common key; a line-anchored `sed`
   would tag whatever a future `[tool.*]` table happened to declare. The value is then rejected unless
-  it is entirely PEP 440's alphabet, because it becomes a git ref and a `gh` argument and a newline
-  in it would reach `gh release create` as a second argument.
+  it is the tag-safe subset of PEP 440 — a local version (`1.0.0+cuda`) or an epoch (`1!2.0`) is
+  legal there and rejected here — because it becomes a git ref and a `gh` argument, and a newline in
+  it would reach `gh release create` as a second argument.
 - **Notes come from `git log`, not `--generate-notes`.** The generated body is built from merged pull
-  requests, and every commit here lands on main directly, so it would be a bare compare link.
+  requests, and every commit here lands on main directly, so it would be a bare compare link. The
+  range base is `git describe`, never `git tag --list --sort=-v:refname | head -1`: git's version
+  sort ranks a prerelease above its own final release, so `v0.2.0rc1` outranks `v0.2.0` and the next
+  release would re-list every commit already published in it. `describe` walks ancestry, which also
+  keeps a tag from an abandoned branch out of the range. For the same reason `--latest` is not
+  passed at all — GitHub picks Latest by date and version, and forcing it would let a corrective
+  0.1.1 landing after 0.2.0 demote 0.2.0 at `/releases/latest`.
 
 No step in it is verdict-neutral. That is the rule for adding one, and four were removed or rewired
 under it: `lint` had its own `uv lock --check`, which asserts exactly what `--locked` already asserts
@@ -193,8 +206,9 @@ in `test` on the same triggers; `check` had a `say` probe that only reordered a 
 thirty seconds later regardless — it survives in `integration`, where it precedes a ~4 GB download;
 the decode step's heredoc went on carrying a `shutil.which` probe for `say` and `ffmpeg` after that
 one went, and it reordered nothing at all — `check_decoding` opens with `synthesize()`, a bare
-`subprocess.run(["say", ...])` outside every `try`, so an absent binary raises `FileNotFoundError` in
-the same millisecond, and `run()` keeps the probe that the path with something to gain by it needs;
+`subprocess.run(["say", ...])` outside every `try`, so an absent `say` raises `FileNotFoundError` in
+the same millisecond and an absent ffmpeg reaches `_decode_with_ffmpeg`'s own `RuntimeError` a line
+later; `run()` keeps the probe, for the path that has something to gain from one;
 and ty ran without `--output-format=github`, so `continue-on-error` left its findings in the log of a
 passing job. Diagnosis is worth a step only where it beats a materially worse alternative, which is
 why the two survivors are the ones guarding a four-gigabyte wait and a truncated annotation.
