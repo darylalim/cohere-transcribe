@@ -156,10 +156,14 @@ withholding secrets from fork pull requests mean it can never be a required chec
 `HF_TOKEN` repository secret; `huggingface_hub` reads that env var directly, so CI needs no
 `hf auth login`.
 
-No step in it is verdict-neutral. That is the rule for adding one, and three were removed or rewired
+No step in it is verdict-neutral. That is the rule for adding one, and four were removed or rewired
 under it: `lint` had its own `uv lock --check`, which asserts exactly what `--locked` already asserts
 in `test` on the same triggers; `check` had a `say` probe that only reordered a failure arriving
 thirty seconds later regardless — it survives in `integration`, where it precedes a ~4 GB download;
+the decode step's heredoc went on carrying a `shutil.which` probe for `say` and `ffmpeg` after that
+one went, and it reordered nothing at all — `check_decoding` opens with `synthesize()`, a bare
+`subprocess.run(["say", ...])` outside every `try`, so an absent binary raises `FileNotFoundError` in
+the same millisecond, and `run()` keeps the probe that the path with something to gain by it needs;
 and ty ran without `--output-format=github`, so `continue-on-error` left its findings in the log of a
 passing job. Diagnosis is worth a step only where it beats a materially worse alternative, which is
 why the two survivors are the ones guarding a four-gigabyte wait and a truncated annotation.

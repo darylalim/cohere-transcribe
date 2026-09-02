@@ -96,10 +96,9 @@ jobs:
       #
       # shellcheck rather than `bash -n`, which catches only the first of those:
       # SC2153 names the misspelling ("RE_INSTAL may not be assigned. Did you
-      # mean RE_INSTALL?") and SC2034 flags the original going unused. It is
-      # preinstalled on the ubuntu images, needs no uv, and returns a verdict,
-      # which is this workflow's rule for admitting a step. -x follows the lib.sh
-      # that edit-checks.sh sources.
+      # mean RE_INSTALL?") and SC2034 flags the original going unused. It returns
+      # a verdict, which is this workflow's rule for admitting a step. -x follows
+      # the lib.sh that edit-checks.sh sources.
       #
       # Blocking, and pinned for exactly the reason ruff is. This step first ran
       # the runner's own shellcheck, arguing that a roughly yearly release
@@ -224,7 +223,6 @@ jobs:
         run: |
           uv run --locked python - <<'PY'
           import pathlib
-          import shutil
           import sys
           import tempfile
 
@@ -242,10 +240,6 @@ jobs:
               """
               return message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
-
-          for binary in ("say", "ffmpeg"):
-              if shutil.which(binary) is None:
-                  sys.exit(f"`{binary}` is not on PATH")
 
           with tempfile.TemporaryDirectory(prefix="cohere-ci-") as tmp:
               failures = check_decoding(pathlib.Path(tmp))
