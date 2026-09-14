@@ -32,7 +32,10 @@ the committed `uv.lock` entirely. That distinction is load-bearing here: `_patch
 `KVCache` resolved from mlx-audio's own `lm.models.cache` rather than `mlx_lm`, a 0.5.0 change the
 package has carried byte for byte since — leaving `_segment_with_vad` and the module's other five
 files byte-identical. That is `cohere_asr` alone — `audio_io` changed materially over the same
-span, which the decode note under Architecture covers.
+span, which the decode note under Architecture covers. The load path is the one place 0.5.2
+through 0.5.4 did touch: `mlx_audio/utils.py` now routes `model_type` through
+`registry.model_type_from_config`, which rewrites only `None`, `qwen2` and `mimo_audio` configs
+and hands `cohere_asr` — and the Silero backend's `silero_vad` — back unchanged.
 `pyproject.toml` has no
 `[build-system]` on purpose — uv then treats the project as non-packaged and installs just the
 dependencies, which is what the app wants, since it runs as scripts from the repo root and imports
@@ -514,11 +517,17 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   the decision, so it is the one thing here a reader cannot find by reading code. The same file
   raises `maxUploadSize` to 1000 MB — Streamlit's default is 200, which an hour of 48 kHz stereo WAV
   runs well past — and that is the ceiling the `getvalue()` measurement above is taken against. It
-  also sets `[browser] gatherUsageStats = false`, which is the one line holding "the only network
-  calls are Hugging Face weight downloads" true: the option defaults to *on*, and the frontend acts
-  on it by fetching an endpoint from `data.streamlit.io` — a third-party webhook today — and
-  POSTing events there. From the browser rather than from Python, which is why no amount of
-  reading this app's own source turns it up.
+  also sets `[browser] gatherUsageStats = false`, which with the emoji favicon below is what holds
+  "the only network calls are Hugging Face weight downloads" true: the option defaults to *on*, and
+  the frontend acts on it by fetching an endpoint from `data.streamlit.io` — a third-party webhook
+  today — and POSTing events there. From the browser rather than from Python, which is why no
+  amount of reading this app's own source turns it up.
+- **`page_icon` is an emoji while every `icon=` argument is Material.** Not an inconsistency to
+  tidy: the `icon=` glyphs are drawn from the font Streamlit bundles, but a Material *favicon* the
+  frontend resolves to an SVG on `fonts.gstatic.com`, which the browser fetches on every page
+  load — the one request, made by the tab icon, that left the sentence above untrue. An emoji is
+  rendered into an inline `data:` URL and fetches nothing. The comment on `st.set_page_config`
+  carries it.
 
 ## Model limits — not missing features
 

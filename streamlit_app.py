@@ -5,7 +5,13 @@ import streamlit as st
 
 st.set_page_config(
     page_title="Cohere Transcribe",
-    page_icon=":material/graphic_eq:",
+    # An emoji, not a Material icon like the `icon=` arguments below. Those are
+    # drawn from the font Streamlit bundles, but a Material *favicon* the
+    # frontend resolves to an SVG on fonts.gstatic.com and the browser fetches
+    # it on every page load -- one request to Google, made by the tab icon, on
+    # an app whose whole pitch is that nothing leaves the machine. An emoji is
+    # rendered into an inline data: URL by the frontend and fetches nothing.
+    page_icon="🎙️",
 )
 
 from utils.audio import (
