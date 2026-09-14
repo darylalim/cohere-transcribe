@@ -67,7 +67,7 @@ def _decode_with_ffmpeg(data: bytes, name: str = "") -> np.ndarray:
     ``0xFFFFFFFF`` placeholder. Raw PCM has no header to misparse.
     """
     if shutil.which("ffmpeg") is None:
-        # The "convert it" half was unconditional until mlx-audio 0.5.1 put a
+        # The "convert it" half was unconditional until mlx-audio 0.4.8 put a
         # scipy resampler on the miniaudio path: a wav, mp3 or flac upload can now
         # arrive here too, when that import or the FIR itself fails, and telling
         # someone to convert a WAV into a WAV is advice that cannot be followed.

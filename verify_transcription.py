@@ -144,7 +144,7 @@ def check(
     if encode is not None:
         # `say` writes AIFF, which mlx-audio's magic-byte sniffer rejects outright,
         # so every other check here decodes through the ffmpeg fallback and nothing
-        # measures the miniaudio path. That became a gap in mlx-audio 0.5.1, which
+        # measures the miniaudio path. That became a gap in mlx-audio 0.4.8, which
         # put a chunked scipy polyphase FIR on it: wav, mp3 and flac now resample to
         # different sample values than they used to, and check_decoding compares
         # durations only -- a gain error, a phase artefact or a truncated tail all

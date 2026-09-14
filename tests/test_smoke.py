@@ -26,7 +26,7 @@ def test_sentencepiece_is_installed() -> None:
     at resolve time nor at import time: it fails four gigabytes in, on the first
     real transcription, past the one check this app treats as its integrity gate.
 
-    Until mlx-audio 0.5.1 it arrived by accident, as a transitive of mlx-lm, so
+    Until mlx-audio 0.5.0 it arrived by accident, as a transitive of mlx-lm, so
     dropping `[stt]` from `pyproject.toml` is a one-token edit that reads as
     tidying. Nothing else here would notice. This file and `test_pure.py` never
     import `mlx_audio`; CI's `check` job runs `check_decoding`, which needs no

@@ -137,7 +137,7 @@ These are model limits, not missing features in this app:
 
 ## Known upstream issues
 
-**`vad=True` crashes in mlx-audio 0.4.7 through 0.5.1.**
+**`vad=True` crashes in mlx-audio 0.4.7 through 0.5.4.**
 `Model._segment_with_vad` is numpy code — its own return annotation is
 `List[np.ndarray]` — but `generate` hands it the `mx.array` from `_to_mono`. It
 fails twice: `.astype(np.float32)` inside the Silero backend, then
@@ -145,7 +145,7 @@ fails twice: `.astype(np.float32)` inside the Silero backend, then
 `utils/models._patch_vad_dtype` coerces once at that boundary. Delete it once
 mlx-audio ships a fix.
 
-**wav, mp3 and flac decode differently since mlx-audio 0.5.1.** Whenever the
+**wav, mp3 and flac decode differently since mlx-audio 0.4.8.** Whenever the
 requested rate is below the file's native one, the miniaudio path now resamples
 through a chunked scipy polyphase FIR instead of miniaudio's own converter. It
 is more accurate — the old path aliased on 44.1 kHz — but it is not free: an

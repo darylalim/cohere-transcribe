@@ -101,7 +101,7 @@ case "$tool" in
 
     case "$tool/$f" in
       Edit/*uv.lock|Write/*uv.lock)
-        decide ask "uv.lock is the only thing pinning mlx-audio to the 0.5.1 internals that _patch_vad_dtype in utils/models.py targets -- pyproject.toml asks merely for >=0.4.4. Change pyproject.toml and run 'uv lock' rather than hand-editing a 550 KB lockfile." ;;
+        decide ask "uv.lock is the only thing pinning mlx-audio to the 0.5.4 internals that _patch_vad_dtype in utils/models.py targets -- pyproject.toml asks merely for >=0.4.4. Change pyproject.toml and run 'uv lock' rather than hand-editing a 640 KB lockfile." ;;
     esac
     ;;
 
@@ -146,15 +146,15 @@ case "$tool" in
     fi
 
     if [[ "$cmd" =~ $RE_INSTALL ]]; then
-      decide deny "That installs outside the lockfile. uv.lock is what pins mlx-audio 0.5.1, which _patch_vad_dtype targets; 'uv pip install' and plain 'pip' both ignore it. Use 'uv sync'."
+      decide deny "That installs outside the lockfile. uv.lock is what pins mlx-audio 0.5.4, which _patch_vad_dtype targets; 'uv pip install' and plain 'pip' both ignore it. Use 'uv sync'."
     fi
 
     if [[ "$cmd" =~ $RE_LOCK_WRITE ]]; then
-      decide ask "That rewrites or deletes uv.lock from the shell, which the gate on the Edit and Write tools does not see. uv.lock is the only thing pinning mlx-audio to the 0.5.1 internals _patch_vad_dtype targets -- pyproject.toml asks merely for >=0.4.4, so a fresh resolve after this is unconstrained."
+      decide ask "That rewrites or deletes uv.lock from the shell, which the gate on the Edit and Write tools does not see. uv.lock is the only thing pinning mlx-audio to the 0.5.4 internals _patch_vad_dtype targets -- pyproject.toml asks merely for >=0.4.4, so a fresh resolve after this is unconstrained."
     fi
 
     if [[ "$cmd" =~ $RE_RELOCK_ADD ]] || [[ "$cmd" =~ $RE_RELOCK_UP ]]; then
-      decide ask "That re-resolves uv.lock. mlx-audio may move off 0.5.1, and _patch_vad_dtype in utils/models.py wraps that release's private _segment_with_vad -- per CLAUDE.md a mismatch there fails as confident, wrong text rather than an error."
+      decide ask "That re-resolves uv.lock. mlx-audio may move off 0.5.4, and _patch_vad_dtype in utils/models.py wraps that release's private _segment_with_vad -- per CLAUDE.md a mismatch there fails as confident, wrong text rather than an error."
     fi
 
     if [[ "$cmd" =~ $RE_VERIFY_RUN ]] || [[ "$cmd" =~ $RE_VERIFY_EXEC ]]; then

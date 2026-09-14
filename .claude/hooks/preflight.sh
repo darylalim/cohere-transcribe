@@ -66,7 +66,7 @@ if [[ "$(uname -s)" != "Darwin" ]] || [[ "$(sysctl -n hw.optional.arm64 2>/dev/n
   notes+=("Not Apple Silicon -- MLX cannot run here.")
 fi
 
-[[ -f "$root/uv.lock" ]] || notes+=("uv.lock is missing -- 'uv sync' will resolve fresh and may not pin the mlx-audio 0.5.1 that _patch_vad_dtype targets.")
+[[ -f "$root/uv.lock" ]] || notes+=("uv.lock is missing -- 'uv sync' will resolve fresh and may not pin the mlx-audio 0.5.4 that _patch_vad_dtype targets.")
 
 ((${#notes[@]})) && printf '%s\n' "${notes[@]}"
 exit 0

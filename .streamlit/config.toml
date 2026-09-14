@@ -1,4 +1,4 @@
-# No [theme] block on purpose. As of Streamlit 1.62.0 the settings menu offers the
+# No [theme] block on purpose. As of Streamlit 1.63.0 the settings menu offers the
 # light/dark switch only when [theme.light] or [theme.dark] carries at least one
 # key — either alone is enough, since the frontend builds the missing half from the
 # flat [theme] keys with base forced to that half. A flat [theme] with even one
