@@ -1,13 +1,15 @@
-# Theme keys live under [theme.dark] and nowhere else. As of Streamlit 1.63.0 a
-# flat [theme] key with no [theme.light] or [theme.dark] beside it -- baseFontSize
+# Theme keys live in the variant tables, [theme.dark] and [theme.light], and not
+# in the flat [theme] table. As of Streamlit 1.63.0 a flat key with no
+# [theme.light] or [theme.dark] beside it -- baseFontSize
 # alone was enough -- sends a custom theme whose unset `base` decays to the
 # protobuf enum's zero value, light, and pins every visitor there regardless of
 # their OS setting. With the table below carrying a key the frontend builds the
 # pair instead: the settings menu offers System/Light/Dark, "System" follows
 # prefers-color-scheme, and the light half is built the same way from
 # [theme.light], which carries one key and is otherwise the stock light theme.
-# A flat key would be inherited by both halves and restyle each of them under
-# the other's feet, so nothing goes in the flat table either. The mode a
+# A flat key is inherited by both halves, so one that has a variant home and
+# sits flat restyles light when dark was meant; the flat table is for keys
+# registered nowhere else, and today none of those is wanted. The mode a
 # visitor lands in is whatever `stActiveTheme-/-v2` in the browser's localStorage
 # last recorded -- per origin and path, so shared with every other Streamlit app
 # ever run on that port -- and "System" only when nothing is stored.
@@ -23,8 +25,9 @@
 # light half too. And showSidebarBorder, baseFontSize, baseFontWeight and
 # metricValueFont* are registered for the flat table only: under [theme.dark]
 # Streamlit logs '"theme.dark.showSidebarBorder" is not a valid config option'
-# once at startup and drops the key, so the sidebar seam (1.20:1) is tonal on
-# purpose.
+# once at startup and drops the key. A flat showSidebarBorder would work, in
+# both modes; the sidebar seam is tonal because 1.20:1 against stock's 1.27
+# was not judged a failure, not because the key has nowhere to go.
 #
 # Every value below is one the app draws, measured as a WCAG ratio with the
 # frontend's own alphas composited in: captions, the dropzone's format hint and
