@@ -1,11 +1,107 @@
-# No [theme] block on purpose. As of Streamlit 1.63.0 the settings menu offers the
-# light/dark switch only when [theme.light] or [theme.dark] carries at least one
-# key — either alone is enough, since the frontend builds the missing half from the
-# flat [theme] keys with base forced to that half. A flat [theme] with even one
-# key — baseFontSize alone was enough — sends a custom theme whose unset `base`
-# decays to the protobuf enum zero value, light, and pins every visitor there
-# regardless of their OS setting. Shipping no theme at all is what restores the
-# stock light/dark pair and lets the app follow the browser.
+# Theme keys live under [theme.dark] and nowhere else. As of Streamlit 1.63.0 a
+# flat [theme] key with no [theme.light] or [theme.dark] beside it -- baseFontSize
+# alone was enough -- sends a custom theme whose unset `base` decays to the
+# protobuf enum's zero value, light, and pins every visitor there regardless of
+# their OS setting. With the table below carrying a key the frontend builds the
+# pair instead: the settings menu offers System/Light/Dark, "System" follows
+# prefers-color-scheme, and the light half is built from the flat keys with base
+# forced to light -- so with no flat keys it is the stock light theme, which is
+# why there is no [theme.light]. A flat key would now be inherited by both halves
+# and restyle light along with dark, so nothing goes there either. The mode a
+# visitor lands in is whatever `stActiveTheme-/-v2` in the browser's localStorage
+# last recorded -- per origin and path, so shared with every other Streamlit app
+# ever run on that port -- and "System" only when nothing is stored.
+#
+# Two keys that look like they belong below do not work here. No font key: a
+# `font = "Inter:https://fonts.googleapis.com/..."` line -- the form every bundled
+# Streamlit theme template uses -- is half-applied under [theme.dark] in 1.63.0,
+# because the frontend links font stylesheets only from the flat table and
+# [theme.sidebar]: the family name lands, nothing is fetched, and the text
+# silently falls back to whatever is installed. Moved to the flat table, where
+# it would work, it has the browser fetch Google on every cold load -- the request
+# the emoji page_icon in streamlit_app.py exists to close -- and restyles the
+# light half too. And showSidebarBorder, baseFontSize, baseFontWeight and
+# metricValueFont* are registered for the flat table only: under [theme.dark]
+# Streamlit logs '"theme.dark.showSidebarBorder" is not a valid config option'
+# once at startup and drops the key, so the sidebar seam (1.20:1) is tonal on
+# purpose.
+#
+# Every value below is one the app draws, measured as a WCAG ratio with the
+# frontend's own alphas composited in: captions, the dropzone's format hint and
+# the slider ticks are textColor at 60 %, a derived border is textColor at 20 %,
+# and the sidebar swaps the two backgrounds. The fact most of it turns on: the
+# primary button's label is hard-coded white, and the stock dark primary #ff4b4b
+# puts it at 3.30:1 -- the Transcribe button, which starts minutes of work, fails
+# AA in the stock theme. It still does for light-mode visitors, since the light
+# half is deliberately stock.
+[theme.dark]
+# Neutral graphite, R = G = B, in place of stock's blue-tinted #0e1117: under
+# near-white text the stock pair is 18:1, the white-on-black extreme that
+# halates across a page of transcript, and a coral accent on blue-black reads as
+# an alarm rather than an accent. One step up for the dropzone, the inputs and
+# the sidebar panel, which is this colour once Streamlit swaps the backgrounds
+# there. 1.20:1 between the two -- enough to read as a well, not enough to glow,
+# and the step is capped by the accent, which has to keep 3:1 on the lighter one.
+# One cool element survives on the neutral panel: the disabled VAD slider draws
+# its thumb and value in Streamlit's fixed gray60 #a3a8b8, which no theme key
+# reaches. Do not tint the backgrounds blue to meet it.
+backgroundColor = "#181818"
+secondaryBackgroundColor = "#282828"
+# Cohere marble-400, the darkest marble token, off pure white so thousands of
+# words of st.text do not bloom; still 13.45:1 on the page and 11.17 in the
+# inputs, AAA on both. At 60 % -- the dropzone's format hint, the recorder's idle
+# timer, the slider ticks -- it is 4.98 on #282828; the line there is #d2d2d2,
+# and the toggle knob on the sidebar rim below (3.49) binds at the same point.
+textColor = "#e0e0e0"
+# Cohere coral-700, not coral-500 (#ff7759 is 2.61:1 under the white label).
+# 4.66 at rest, about 8.2 on the darken-15 % hover, and 3:1 on both surfaces for
+# every solid state it also paints: toggle-on track, slider fill, the selected
+# segment's border, the focus border on every input. That window is narrow --
+# white on top caps the luminance at 0.183, 3:1 on #282828 floors it at 0.164 --
+# and no colour inside it can also serve as 14 px text at 4.5 on this page,
+# which needs 0.216 or more. So four states stay short, and are known: the
+# selected segment's label (3.49 on its tint; the state is also carried by a
+# full primary border at 3.81), the slider's value while VAD is on (3.16), the
+# dropzone's drag-over label (3.16, transient, with a 2 px primary ring), and
+# the 50 %-alpha focus ring on buttons (1.82 against the page it is drawn on;
+# the button itself darkens to its hover colour on focus, which is the larger
+# change). Lightening toward the coral people recognise is the edit to refuse:
+# it rescues the segment label and drops the Transcribe button back under AA.
+# A violet would separate better from the st.error drawn under that button for
+# red-green vision (Machado 2009 simulation: quartz-700 is dE 53/64 from the
+# alert text under protan/deutan, coral 23/20). Coral stays because neither
+# element leans on hue -- both carry an icon and a label -- and stock
+# Streamlit's own red primary over red alerts is closer still. The one hue-only
+# cue it does give up is the recorder's Stop button, primary at rest and
+# redColor on hover; the cursor and the button's position carry that.
+primaryColor = "#ca492d"
+# The frame around the transcript container, the three metric cards, the status
+# box, the chunks expander and the download buttons. Derived it is textColor at
+# 20 %, #404040 at 1.71:1 on a lifted graphite, and the frame around the reading
+# surface disappears. Solid #505050 is 2.20:1: a panel edge that does not
+# compete with the 5.56:1 captions inside it. Deliberately under 3:1. It is the
+# only boundary of the download buttons (their fill is 1.07:1 against the page),
+# of the unselected segment and of the Transcribe button before an upload, and
+# that is allowed because each carries a label that identifies it -- while a 3:1
+# rim around a page of transcript is the loudest thing on it. The sidebar is
+# the other case; see below.
+borderColor = "#505050"
+# Without it a field's edge is its fill against the panel -- #181818 on #282828
+# in the sidebar, 1.20:1 -- so the Checkpoint text_input reads as a line of text
+# until focused and the dropzone as a slightly lighter patch. On, every field
+# draws a 1 px borderColor outline and swaps it for solid primary on focus.
+showWidgetBorder = true
+
+[theme.dark.sidebar]
+# The sidebar is all controls and no reading surface, so its rims can do what
+# the main column's must not. The outline showWidgetBorder just gave the
+# selectbox, the text_input and the number_input is the only thing that marks a
+# field's extent, and at the main value it sits at 1.83:1 on #282828. Cohere
+# volcanic-600 is 3.20:1 there, WCAG 1.4.11's floor for a control boundary. The
+# same colour is the toggle's off track at rest; hover swaps that for a derived
+# tone at 1.32, and the knob (textColor: 3.49 on the rim, 6.11 on the hovered
+# track) is what carries the state through it.
+borderColor = "#757575"
 
 [server]
 # An hour of 48 kHz stereo WAV runs well past Streamlit's 200 MB default.

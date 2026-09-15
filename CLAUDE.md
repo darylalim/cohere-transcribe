@@ -311,7 +311,7 @@ utils/models.py            checkpoint registry, language table, cached loader, m
 verify_transcription.py    integration test against known ground truth
 tests/test_pure.py         unit tests for the pure functions, and for the test oracle above
 tests/test_smoke.py        sentencepiece is installed; streamlit_app.py renders, empty and seeded
-.streamlit/config.toml     the 1000 MB upload ceiling, usage stats off, no [theme] block on purpose
+.streamlit/config.toml     the 1000 MB upload ceiling, usage stats off, [theme.dark] and no flat [theme] key
 ```
 
 Flow: `UploadedFile` (or `st.audio_input`) → `decode_to_mono16k` → flat `np.float32` array at 16 kHz +
@@ -508,14 +508,36 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   150,000-row rule it documents covers pandas, polars and Arrow inputs only.
 - **`st.cache_resource(max_entries=1)`** keeps exactly one multi-gigabyte model resident, so pointing
   the app at another repo evicts rather than accumulates.
-- **`.streamlit/config.toml` ships no `[theme]` block, on purpose.** As of 1.63.0, Streamlit offers
-  the light/dark switch in its settings menu only when `[theme.light]` or `[theme.dark]` carries at
-  least one key — either alone is enough, since the frontend builds the missing half from the flat
-  `[theme]` keys with `base` forced to that half; a flat `[theme]` carrying even one key —
-  `baseFontSize` alone was enough — sends a custom theme whose unset `base` decays to the protobuf
-  enum's zero value, light, and pins every visitor there regardless of their OS setting. Shipping no
-  theme at all is what restores the stock pair and lets the app follow the browser. The absence is
-  the decision, so it is the one thing here a reader cannot find by reading code. The same file
+- **`.streamlit/config.toml` carries a `[theme.dark]` block and no flat `[theme]` key, on purpose.**
+  As of 1.63.0, a flat `[theme]` carrying even one key — `baseFontSize` alone was enough — with no
+  `[theme.light]` or `[theme.dark]` beside it sends a custom theme whose unset `base` decays to the
+  protobuf enum's zero value, light, and pins every visitor there regardless of their OS setting. A
+  variant table carrying at least one key — either alone is enough, whatever the bundled Streamlit
+  skill doc says about needing both — makes the frontend build the pair instead: the settings menu
+  offers System/Light/Dark, "System" follows `prefers-color-scheme`, and the missing half is built
+  from the flat keys with `base` forced to it, so with no flat keys the light half is stock light.
+  That is why there is no `[theme.light]`, and why nothing goes in the flat table now: a flat key
+  would restyle both halves. Two more things stay out of it. No font key: the
+  `font = "Inter:https://fonts.googleapis.com/…"` form every bundled theme template uses is
+  half-applied under `[theme.dark]` — the frontend links font stylesheets only from the flat table
+  and `[theme.sidebar]`, so the family name lands, nothing is fetched, and the text silently falls
+  back — and in the flat table, where it would work, it has the browser fetch Google on every cold
+  load, the request the emoji favicon below closes, and restyles light too. And `base`,
+  `fontFaces`, `showSidebarBorder`, `baseFontSize`, `baseFontWeight` and `metricValueFontSize` /
+  `Weight` are registered for the flat table only: under `[theme.dark]` Streamlit logs
+  `"theme.dark.showSidebarBorder" is not a valid config option` once at startup and drops the key —
+  two of the four drafts this block was chosen from shipped it before that log line was read. The
+  values are argued key by key in the file. The fact most of them turn on is that the primary
+  button's label is hard-coded white in the frontend, so `primaryColor` is really "a colour that
+  carries white at 4.5:1", which stock `#ff4b4b` (3.30:1) is not; and inside `st.error` links and
+  inline code are `color: inherit`, so `linkColor` and `codeTextColor` cannot reach the Hub URL or
+  the `hf auth login` chip in the sign-in error — the only inline code a theme key reaches is `-mlx-`
+  in one tooltip, which is why neither key is set. The ratios in the comments composite the
+  frontend's own alphas (captions are `textColor` at 60 %, a derived border 20 %) and were checked
+  against a script kept outside the repo; re-measure rather than reason from the hex values.
+  `tests/test_smoke.py` runs under AppTest, which parses `config.toml` but has no frontend, so a
+  flat key, a font URL or a rejected key lands there without failing anything — the rejected key's
+  warning is merely captured by pytest. Nothing in CI catches any of the three. The same file
   raises `maxUploadSize` to 1000 MB — Streamlit's default is 200, which an hour of 48 kHz stereo WAV
   runs well past — and that is the ceiling the `getvalue()` measurement above is taken against. It
   also sets `[browser] gatherUsageStats = false`, which with the emoji favicon below is what holds
