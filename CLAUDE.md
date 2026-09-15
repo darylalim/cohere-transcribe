@@ -139,8 +139,8 @@ Note that `_cues` handles `segments=None` via `for seg in segments or []` while 
 caller — `Transcript.segments` defaults to a list and `output.segments or []` coerces at
 construction — so it is untested on purpose rather than by oversight.
 
-**`tests/test_smoke.py` — no model either, and no pure functions.** Two things that fall between the
-layers above. Both are cheap, and both were invisible to every job that runs on push.
+**`tests/test_smoke.py` — no model either, and no pure functions.** Three things that fall between
+the layers above. All are cheap, and all were invisible to every job that runs on push.
 
 - **`sentencepiece` is present.** The `[stt]` extra is the only thing naming it, and its absence
   surfaces four gigabytes in, *after* `load_weights(strict=True)` has already passed — the
@@ -154,6 +154,17 @@ layers above. Both are cheap, and both were invisible to every job that runs on 
   metrics row, the download buttons and the chunk table on that key and a bare run reaches none of
   them. The second run is not redundant — mutating `st.dataframe(lazy=True)` to carry a nonexistent
   keyword leaves the bare run green and turns the seeded one red, which is how the split was found.
+- **`.streamlit/config.toml` keeps its theme rules.** No flat `[theme]` key, no font URL or
+  `fontFaces`, and every key registered for the table it sits in — the three failures the file's
+  header names, each of which lands silently: a flat key pins every visitor to light, a font URL
+  has the browser fetch Google, and a misplaced key is logged once and dropped. The registry check
+  goes through `config.get_options_for_section`, which is what `app_session.py` consults to build
+  the proto, rather than through the parser's log line. It reads the file with `toml`, not
+  `tomllib`: the latter is 3.11+ and `requires-python` claims 3.10, and `toml` is what
+  `streamlit.config` parses the file with, so the test performs Streamlit's own parse. Verified
+  by mutation — a flat `baseFontSize`, a Google `font` URL, `showSidebarBorder` and `fontFaces`
+  under `[theme.dark]` each turn it red on their own. Values are not checked; the ratios are the
+  file's argument, re-measured when a value changes.
 
 This is not the mocked-`generate` test `test_pure.py` rules out. AppTest stops at the first render
 and never presses Transcribe, so `load_asr` is never called and nothing imports `mlx_audio` — which
@@ -310,8 +321,8 @@ utils/audio.py             decode to mono 16 kHz float32; SRT/VTT formatting
 utils/models.py            checkpoint registry, language table, cached loader, mlx-audio VAD shim
 verify_transcription.py    integration test against known ground truth
 tests/test_pure.py         unit tests for the pure functions, and for the test oracle above
-tests/test_smoke.py        sentencepiece is installed; streamlit_app.py renders, empty and seeded
-.streamlit/config.toml     the 1000 MB upload ceiling, usage stats off, [theme.dark] and no flat [theme] key
+tests/test_smoke.py        sentencepiece is installed; streamlit_app.py renders; config.toml keeps its theme rules
+.streamlit/config.toml     the 1000 MB upload ceiling, usage stats off, [theme.dark], a one-key [theme.light]
 ```
 
 Flow: `UploadedFile` (or `st.audio_input`) → `decode_to_mono16k` → flat `np.float32` array at 16 kHz +
@@ -515,9 +526,11 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   variant table carrying at least one key — either alone is enough, whatever the bundled Streamlit
   skill doc says about needing both — makes the frontend build the pair instead: the settings menu
   offers System/Light/Dark, "System" follows `prefers-color-scheme`, and the missing half is built
-  from the flat keys with `base` forced to it, so with no flat keys the light half is stock light.
-  That is why there is no `[theme.light]`, and why nothing goes in the flat table now: a flat key
-  would restyle both halves. Two more things stay out of it. No font key: the
+  from the flat keys with `base` forced to it. The light half is `[theme.light]` with one key,
+  `primaryColor`: stock light's primary is the same `#ff4b4b`, short on more pairs than dark is,
+  and none of the failures the dark keys fix exist in stock light, so anything else there would
+  restate stock. Nothing goes in the flat table now: a flat key would restyle both halves. Two more
+  things stay out of it. No font key: the
   `font = "Inter:https://fonts.googleapis.com/…"` form every bundled theme template uses is
   half-applied under `[theme.dark]` — the frontend links font stylesheets only from the flat table
   and `[theme.sidebar]`, so the family name lands, nothing is fetched, and the text silently falls
@@ -535,9 +548,10 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   in one tooltip, which is why neither key is set. The ratios in the comments composite the
   frontend's own alphas (captions are `textColor` at 60 %, a derived border 20 %) and were checked
   against a script kept outside the repo; re-measure rather than reason from the hex values.
-  `tests/test_smoke.py` runs under AppTest, which parses `config.toml` but has no frontend, so a
-  flat key, a font URL or a rejected key lands there without failing anything — the rejected key's
-  warning is merely captured by pytest. Nothing in CI catches any of the three. The same file
+  `tests/test_smoke.py` asserts the three structural rules — no flat key, no font URL, every key
+  registered for its table — because AppTest, which its other tests run under, parses this file
+  and lets all three through: it has no frontend, and the rejected key's warning is merely captured
+  by pytest. The same file
   raises `maxUploadSize` to 1000 MB — Streamlit's default is 200, which an hour of 48 kHz stereo WAV
   runs well past — and that is the ceiling the `getvalue()` measurement above is taken against. It
   also sets `[browser] gatherUsageStats = false`, which with the emoji favicon below is what holds

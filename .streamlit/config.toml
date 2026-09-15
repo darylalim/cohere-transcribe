@@ -4,10 +4,10 @@
 # protobuf enum's zero value, light, and pins every visitor there regardless of
 # their OS setting. With the table below carrying a key the frontend builds the
 # pair instead: the settings menu offers System/Light/Dark, "System" follows
-# prefers-color-scheme, and the light half is built from the flat keys with base
-# forced to light -- so with no flat keys it is the stock light theme, which is
-# why there is no [theme.light]. A flat key would now be inherited by both halves
-# and restyle light along with dark, so nothing goes there either. The mode a
+# prefers-color-scheme, and the light half is built the same way from
+# [theme.light], which carries one key and is otherwise the stock light theme.
+# A flat key would be inherited by both halves and restyle each of them under
+# the other's feet, so nothing goes in the flat table either. The mode a
 # visitor lands in is whatever `stActiveTheme-/-v2` in the browser's localStorage
 # last recorded -- per origin and path, so shared with every other Streamlit app
 # ever run on that port -- and "System" only when nothing is stored.
@@ -32,8 +32,7 @@
 # and the sidebar swaps the two backgrounds. The fact most of it turns on: the
 # primary button's label is hard-coded white, and the stock dark primary #ff4b4b
 # puts it at 3.30:1 -- the Transcribe button, which starts minutes of work, fails
-# AA in the stock theme. It still does for light-mode visitors, since the light
-# half is deliberately stock.
+# AA in the stock theme, in both modes: stock light's primary is the same red.
 [theme.dark]
 # Neutral graphite, R = G = B, in place of stock's blue-tinted #0e1117: under
 # near-white text the stock pair is 18:1, the white-on-black extreme that
@@ -102,6 +101,17 @@ showWidgetBorder = true
 # tone at 1.32, and the knob (textColor: 3.49 on the rim, 6.11 on the hovered
 # track) is what carries the state through it.
 borderColor = "#757575"
+
+[theme.light]
+# The same coral, and the only key here. Stock light's primary is the same
+# #ff4b4b: 3.30:1 under the white label, and short on more pairs than dark is --
+# the slider track (2.95 on #f0f2f6) and the selected segment's label (2.92)
+# both miss. Coral-700 on white clears every one of them: 4.66 under the label,
+# 4.66 as a toggle track, 4.16 on the slider track, 4.08 as the segment label.
+# Nothing else is set, because none of the failures the dark keys fix exist in
+# stock light -- its text is #31333f at 12.5:1 on white, its surfaces carry no
+# tint -- so any other key here would restate stock.
+primaryColor = "#ca492d"
 
 [server]
 # An hour of 48 kHz stereo WAV runs well past Streamlit's 200 MB default.
