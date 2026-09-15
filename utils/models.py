@@ -164,9 +164,10 @@ def _patch_vad_dtype() -> None:
     """
     from mlx_audio.stt.models.cohere_asr.cohere_asr import Model
 
-    # _segment_with_vad is private and pyproject allows any mlx-audio >= 0.4.4,
-    # including the release that fixes this. Bail out quietly if it is gone
-    # rather than failing every load — this runs even when VAD is switched off.
+    # _segment_with_vad is private and pyproject allows any mlx-audio in
+    # >=0.4.4,<0.6, which may include the release that fixes this. Bail out
+    # quietly if it is gone rather than failing every load — this runs even when
+    # VAD is switched off.
     # Bailing takes the repo pin down with it, which is the right coupling: the
     # `_vad_backend` cache the pin writes is read by this method and nowhere
     # else, so if the method is gone there is nothing left to pin.

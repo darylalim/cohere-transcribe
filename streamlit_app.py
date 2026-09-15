@@ -7,10 +7,12 @@ st.set_page_config(
     page_title="Cohere Transcribe",
     # An emoji, not a Material icon like the `icon=` arguments below. Those are
     # drawn from the font Streamlit bundles, but a Material *favicon* the
-    # frontend resolves to an SVG on fonts.gstatic.com and the browser fetches
-    # it on every page load -- one request to Google, made by the tab icon, on
-    # an app whose whole pitch is that nothing leaves the machine. An emoji is
-    # rendered into an inline data: URL by the frontend and fetches nothing.
+    # frontend resolves to an SVG on fonts.gstatic.com, which the browser then
+    # fetches from Google -- once per cold cache, not per load, but a request
+    # made by the tab icon on an app whose whole pitch is that nothing leaves
+    # the machine. An emoji is rendered into an inline data: URL by the frontend
+    # and fetches nothing. tests/test_smoke.py renders the page but asserts
+    # nothing about page config, so nothing here catches this being reverted.
     page_icon="🎙️",
 )
 

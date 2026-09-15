@@ -101,7 +101,7 @@ case "$tool" in
 
     case "$tool/$f" in
       Edit/*uv.lock|Write/*uv.lock)
-        decide ask "uv.lock is the only thing pinning mlx-audio to the 0.5.4 internals that _patch_vad_dtype in utils/models.py targets -- pyproject.toml asks merely for >=0.4.4. Change pyproject.toml and run 'uv lock' rather than hand-editing a 640 KB lockfile." ;;
+        decide ask "uv.lock is the only thing pinning mlx-audio to the 0.5.4 internals that _patch_vad_dtype in utils/models.py targets -- pyproject.toml asks merely for >=0.4.4,<0.6. Change pyproject.toml and run 'uv lock' rather than hand-editing a 640 KB lockfile." ;;
     esac
     ;;
 
@@ -150,7 +150,7 @@ case "$tool" in
     fi
 
     if [[ "$cmd" =~ $RE_LOCK_WRITE ]]; then
-      decide ask "That rewrites or deletes uv.lock from the shell, which the gate on the Edit and Write tools does not see. uv.lock is the only thing pinning mlx-audio to the 0.5.4 internals _patch_vad_dtype targets -- pyproject.toml asks merely for >=0.4.4, so a fresh resolve after this is unconstrained."
+      decide ask "That rewrites or deletes uv.lock from the shell, which the gate on the Edit and Write tools does not see. uv.lock is the only thing pinning mlx-audio to the 0.5.4 internals _patch_vad_dtype targets -- pyproject.toml asks merely for >=0.4.4,<0.6, so a fresh resolve after this lands wherever that range does."
     fi
 
     if [[ "$cmd" =~ $RE_RELOCK_ADD ]] || [[ "$cmd" =~ $RE_RELOCK_UP ]]; then

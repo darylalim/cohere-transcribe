@@ -27,15 +27,16 @@ When working with Python, invoke the relevant `/astral:<skill>` — `/astral:uv`
 Use `uv sync`, never `uv pip install -e .` — the latter re-resolves from `pyproject.toml` and ignores
 the committed `uv.lock` entirely. That distinction is load-bearing here: `_patch_vad_dtype` wraps a
 *private* mlx-audio method against internals `pyproject.toml` does not pin — it asks only for
-`>=0.4.4` — so the lockfile is the only thing holding the release that patch was checked against:
-0.5.4 today, which differs from the 0.4.7 it was written for by one import in `cohere_asr.py` —
-`KVCache` resolved from mlx-audio's own `lm.models.cache` rather than `mlx_lm`, a 0.5.0 change the
-package has carried byte for byte since — leaving `_segment_with_vad` and the module's other five
-files byte-identical. That is `cohere_asr` alone — `audio_io` changed materially over the same
-span, which the decode note under Architecture covers. The load path is the one place 0.5.2
-through 0.5.4 did touch: `mlx_audio/utils.py` now routes `model_type` through
-`registry.model_type_from_config`, which rewrites only `None`, `qwen2` and `mimo_audio` configs
-and hands `cohere_asr` — and the Silero backend's `silero_vad` — back unchanged.
+`>=0.4.4,<0.6` — so the lockfile is the only thing holding the release that patch was checked
+against: 0.5.4 today, which differs from the 0.4.7 it was written for by one import in
+`cohere_asr.py` — `KVCache` resolved from mlx-audio's own `lm.models.cache` rather than `mlx_lm`,
+a 0.5.0 change the package has carried byte for byte since — leaving `_segment_with_vad` and the
+module's other five files byte-identical. That is `cohere_asr` alone — `audio_io` changed
+materially over the same span, which the decode note under Architecture covers. The load path is
+the one place 0.5.2 touched, and 0.5.3 and 0.5.4 left it alone: `mlx_audio/utils.py` now routes
+`model_type` through `registry.model_type_from_config`, which reroutes a config to `mimo_audio`
+only when its `model_type` is missing or `qwen2` *and* it carries MiMo's own keys, and hands
+`cohere_asr` — and the Silero backend's `silero_vad` — back unchanged.
 `pyproject.toml` has no
 `[build-system]` on purpose — uv then treats the project as non-packaged and installs just the
 dependencies, which is what the app wants, since it runs as scripts from the repo root and imports
@@ -149,7 +150,7 @@ layers above. Both are cheap, and both were invisible to every job that runs on 
   environment.
 - **`streamlit_app.py` actually runs.** Nothing else executes it — `test_pure.py` imports only
   `utils`, ruff and ty are static, and `check_decoding` stops at `utils/`. It runs twice: once bare,
-  and once with a `Transcript` seeded into session state, because `streamlit_app.py:28` gates the
+  and once with a `Transcript` seeded into session state, because `streamlit_app.py:36` gates the
   metrics row, the download buttons and the chunk table on that key and a bare run reaches none of
   them. The second run is not redundant — mutating `st.dataframe(lazy=True)` to carry a nonexistent
   keyword leaves the bare run green and turns the seeded one red, which is how the split was found.
@@ -524,10 +525,11 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   amount of reading this app's own source turns it up.
 - **`page_icon` is an emoji while every `icon=` argument is Material.** Not an inconsistency to
   tidy: the `icon=` glyphs are drawn from the font Streamlit bundles, but a Material *favicon* the
-  frontend resolves to an SVG on `fonts.gstatic.com`, which the browser fetches on every page
-  load — the one request, made by the tab icon, that left the sentence above untrue. An emoji is
-  rendered into an inline `data:` URL and fetches nothing. The comment on `st.set_page_config`
-  carries it.
+  frontend resolves to an SVG on `fonts.gstatic.com`, which the browser then fetches from Google —
+  once per cold cache rather than per load, but the one request, made by the tab icon, that left
+  the sentence above untrue. An emoji is rendered into an inline `data:` URL and fetches nothing.
+  `tests/test_smoke.py` renders the page but asserts nothing about page config, so nothing here
+  catches its reversal. The comment on `st.set_page_config` carries it.
 
 ## Model limits — not missing features
 

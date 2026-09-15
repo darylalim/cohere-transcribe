@@ -16,5 +16,6 @@ maxUploadSize = 1000
 # the frontend, whose MetricsManager GETs an endpoint from data.streamlit.io -- a
 # third-party webhook today -- and POSTs events there from the browser. So "audio
 # never leaves the machine, the only network calls are weight downloads" is true of
-# this app only with this line in it.
+# this app only with this line in it -- and with the emoji page_icon in
+# streamlit_app.py, which closes the other browser request; its comment says why.
 gatherUsageStats = false

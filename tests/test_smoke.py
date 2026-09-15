@@ -76,7 +76,7 @@ def test_app_script_runs() -> None:
 def test_app_renders_a_finished_result() -> None:
     """The result half must render too, which an empty run does not reach.
 
-    `streamlit_app.py:28` reads `result` out of session state and everything
+    `streamlit_app.py:36` reads `result` out of session state and everything
     below -- the metrics row, the three download buttons, the chunk table -- is
     gated on it. So an unseeded AppTest exercises only the input half, and a bad
     keyword in the result section passes it: measured, by mutating
