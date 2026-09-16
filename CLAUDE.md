@@ -153,8 +153,8 @@ the layers above. All are cheap, and all were invisible to every job that runs o
   and once with a `Transcript` seeded into session state, because the
   `st.session_state.setdefault("result", None)` read at the top of `streamlit_app.py` gates the
   transcript text, the metrics row, the download buttons and the chunk table on that key and a
-  bare run reaches none of them — the bordered box in the reading column it does reach, since the
-  placeholder branch draws the same one. The second run is not redundant — mutating
+  bare run reaches none of them — the bordered box in the reading column it does reach, since
+  `transcript_slot` carries the border and the cap and the placeholder branch writes into it. The second run is not redundant — mutating
   `st.dataframe(lazy=True)` to carry a nonexistent keyword leaves the bare run green and turns the
   seeded one red, which is how the split was found.
 - **`.streamlit/config.toml` keeps its theme rules.** Only tables Streamlit accepts; a flat
@@ -472,8 +472,8 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   localStorage. The three source comments — on `layout=`, on `st.columns` and on
   `TRANSCRIPT_WIDTH` — carry every measurement and the ratio and cap arguments; the numbers there
   were measured in the browser, not derived from the column widths (the panel that proposed the
-  ratio had `[2, 3]` overflowing the chunk table; it fits exactly), so re-measure rather than
-  round. Two accepted costs are stated there too: `st.columns` has one breakpoint, so with the
+  ratio had `[2, 3]` overflowing the chunk table; the grid needs 497 px and `[2, 3]` gives it
+  517), so re-measure rather than round. Two accepted costs are stated there too: `st.columns` has one breakpoint, so with the
   sidebar open the right column clears the cap only from ~1835 px up and the measure follows the
   window below that, down to ~45 characters at 1100; and `wrap=` is not passed on `st.columns` or
   `st.container`, absent from 1.61, the floor, and present from 1.62. `tests/test_smoke.py` sees

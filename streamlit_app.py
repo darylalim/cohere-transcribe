@@ -1,4 +1,5 @@
 import hashlib
+import re
 import time
 
 import streamlit as st
@@ -23,8 +24,8 @@ st.set_page_config(
     # 270 px of transcript showing, the downloads and the chunk table below
     # the fold. Wide alone would be worse for reading: ~1420 px of st.text,
     # some 215 characters a line at the glyph width measured under Result.
-    # The width is spent by the two columns under Input; the reading surface
-    # is capped by TRANSCRIPT_WIDTH under Result.
+    # The width is spent by the two columns under Input, and the reading
+    # surface is capped there by TRANSCRIPT_WIDTH.
     layout="wide",
 )
 
@@ -104,23 +105,27 @@ with st.sidebar:
 # with the title instead of under everything that produced it. [4, 5] and not
 # [1, 1] or [2, 3]: with the sidebar open the two columns measure 628 and
 # 789 px (1417 after the 32 px gap: 1460 nominal, less the scrollbar). The
-# right has to clear the cap on the transcript box under Result, so the
-# measure is the same whether the sidebar is open or collapsed -- [1, 1]
-# gives it ~708, short of the cap, and the line length would follow the
-# sidebar. [2, 3] clears it with 113 px to spare that the box cannot use,
-# and the left is the side with a use for the slack: the chunk table draws
-# its two auto-sized number columns and its 400 px "large" text column in
-# 517 px, which [2, 3] meets with nothing left over (517 measured against
-# 517) and [4, 5] with 77 px. gap="medium" (2rem): at "small" the metric
-# cards' border sits 1rem from the transcript's. The split has exactly one
-# breakpoint, the 640 px at which st.columns stacks it, input first -- the
-# order the page had -- and nothing native adds a second: with the sidebar
-# open the right column is (viewport - 503) x 5/9, so it clears the cap only
-# from ~1835 px up, and below that the measure follows the window -- ~74
-# characters at 1440, ~45 at 1100 (measured), where the metric cards break
-# onto two rows. A portrait 1080 px display sits in that band. The 1920
-# panel is the target, and that is the accepted cost. No wrap=: it is absent
-# from 1.61, the floor, and 1.62 is where it lands.
+# right has to clear the cap on the transcript slot below, so the measure
+# is the same whether the sidebar is open or collapsed -- [1, 1] gives it
+# ~708, short of the cap, and the line length would follow the sidebar.
+# [2, 3] clears it with 113 px to spare that the box cannot use, and the
+# left is the side with a use for the slack: the chunk table's grid needs
+# 497 px -- two auto-sized number columns and the 400 px "large" text
+# column, read off its scrollWidth in a column too narrow for it -- and
+# gets 517 under [2, 3] and 581 under [4, 5]: 20 px against 84 before a
+# horizontal scrollbar. gap="medium" (2rem): at "small" the metric cards'
+# border sits 1rem from the transcript's. The split has exactly one
+# breakpoint, the 640 px at which st.columns stacks it, left column first.
+# That keeps the input half in the order the page had and moves the
+# transcript below the metrics, the downloads and the chunk table, where it
+# used to sit between the metrics and the downloads -- the accepted cost at
+# phone width, since nothing native adds a second breakpoint. Above it, with
+# the sidebar open, the right column is (viewport - 503) x 5/9, so it clears
+# the cap only from ~1835 px up, and below that the measure follows the
+# window -- ~74 characters at 1440, ~45 at 1100 (measured), where the metric
+# cards break onto two rows. A portrait 1080 px display sits in that band.
+# The 1920 panel is the target, and that is the other accepted cost. No
+# wrap=: it is absent from 1.61, the floor, and 1.62 is where it lands.
 left, right = st.columns([4, 5], gap="medium")
 
 with left:
@@ -229,7 +234,22 @@ status_slot = left.container()
 # the downloads at the top of the page after thousands of words rather than
 # past all of them: reaching them is the Home key, not a scroll.
 summary_slot = left.container()
-transcript_slot = right.container()
+# Capped, because the reading column is 789 px with the sidebar open and
+# 956 px with it collapsed -- a state 1.63 persists in localStorage, so a
+# user who collapses it once would otherwise read ~140 characters a line on
+# every later load. 740 leaves 708 px of text inside the border: ~107
+# characters of 16 px Source Sans at the ~6.6 px a glyph a sample transcript
+# measured in the browser (7.5 was the estimate; re-measure rather than
+# reason from it), and the same measure in both sidebar states at 1920, since
+# the column clears the cap in either. In page flow, not a height=<int>
+# scroll box: a fixed pane is right for exactly one viewport height -- a
+# 560 px one shows 20 lines here against 28 -- and puts thousands of words
+# behind a second scrollbar. The price is 49 px of the column unused with the
+# sidebar open and 216 collapsed. The border and the cap sit on the slot
+# itself, so the placeholder and the transcript are drawn into one box and
+# cannot drift apart.
+TRANSCRIPT_WIDTH = 740
+transcript_slot = right.container(border=True, width=TRANSCRIPT_WIDTH)
 
 # --- Transcription --------------------------------------------------------
 
@@ -305,22 +325,8 @@ if run and audio_file is not None:
 
 # --- Result ---------------------------------------------------------------
 
-# Capped, because the reading column is 789 px with the sidebar open and
-# 956 px with it collapsed -- a state 1.63 persists in localStorage, so a
-# user who collapses it once would otherwise read ~140 characters a line on
-# every later load. 740 leaves 708 px of text inside the border: ~107
-# characters of 16 px Source Sans at the ~6.6 px a glyph a sample transcript
-# measured in the browser (7.5 was the estimate; re-measure rather than
-# reason from it), and the same measure in both sidebar states at 1920, since
-# the column clears the cap in either. In page flow, not a height=<int>
-# scroll box: a fixed pane is right for exactly one viewport height -- a
-# 560 px one shows 20 lines here against 28 -- and puts thousands of words
-# behind a second scrollbar. The price is 49 px of the column unused with the
-# sidebar open and 216 collapsed.
-TRANSCRIPT_WIDTH = 740
-
 if result:
-    with transcript_slot, st.container(border=True, width=TRANSCRIPT_WIDTH):
+    with transcript_slot:
         # st.text, not st.markdown: this is uncontrolled model output and the
         # product is a verbatim transcript. Markdown eats what the decoder
         # emits — a hallucinated `*music*` renders italic with the asterisks
@@ -403,8 +409,14 @@ if result:
             # of words down, and beside the buttons whose file stems it names
             # -- while it fits: past ~60 characters, which a Zoom or Voice
             # Memos filename reaches, the row wraps it onto its own line under
-            # them.
-            st.caption(f"{LANGUAGES[result.language]} · {result.source_name}")
+            # them. st.caption is Markdown and the filename is not ours:
+            # `take*2*.wav` showed an italic "take2.wav" beside buttons that
+            # write take*2*.txt, the screen/file mismatch st.text exists to
+            # prevent one box over. CommonMark lets a backslash escape any
+            # ASCII punctuation, so every one is escaped rather than a list of
+            # the ones that happen to be markup today.
+            name = re.sub(r"([!-/:-@\[-`{-~])", r"\\\1", result.source_name)
+            st.caption(f"{LANGUAGES[result.language]} · {name}")
 
         if len(result.segments) > 1:
             # `lazy=True`, not a hand-rolled gate. st.expander computes and ships
@@ -447,9 +459,10 @@ if result:
                     },
                 )
 else:
-    # The same box at the same width, so the split reads as a page with an
-    # empty reading surface rather than half a page. One caption, and no
-    # "press Transcribe" in it: this branch is also reached on the rerun
-    # whose press just failed, beside the error status that says so.
-    with transcript_slot, st.container(border=True, width=TRANSCRIPT_WIDTH):
+    # The same box, so the split reads as a page with an empty reading
+    # surface rather than half a page. One caption, and no "press Transcribe"
+    # in it: this branch is also reached on a rerun whose press just failed
+    # with no earlier transcript to keep, beside the error status that says
+    # so.
+    with transcript_slot:
         st.caption("The transcript appears here.")

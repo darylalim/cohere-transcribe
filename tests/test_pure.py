@@ -429,8 +429,9 @@ def test_speedup_is_audio_over_wall_clock():
 
 def test_speedup_does_not_divide_by_zero():
     """The metric renders before anything guarantees elapsed_s is positive, and
-    a ZeroDivisionError here would take the metrics, the downloads and the chunk
-    table off screen beside an already-rendered transcript."""
+    a ZeroDivisionError here would take the Speed card, the downloads and the
+    chunk table off screen beside an already-rendered transcript and its first
+    two metric cards."""
     assert _transcript(elapsed_s=0.0).speedup == 0.0
 
 

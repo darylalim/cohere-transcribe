@@ -82,8 +82,8 @@ def test_app_renders_a_finished_result() -> None:
     `streamlit_app.py` pulls `result` out of session state, and everything gated
     on it -- the transcript text, the metrics row, the three download buttons,
     the chunk table -- is what a bare run never reaches. (The bordered box in
-    the reading column is drawn either way: the placeholder branch draws the
-    same `st.container(width=TRANSCRIPT_WIDTH)` with a caption in it.) So an
+    the reading column is drawn either way: `transcript_slot` carries the
+    border and the cap, and the placeholder branch puts a caption in it.) So an
     unseeded AppTest exercises the input half and an empty box, and a bad
     keyword in the result section passes it: measured, by mutating
     `st.dataframe(lazy=True)` to carry a nonexistent argument and watching
