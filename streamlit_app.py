@@ -259,13 +259,20 @@ if run and audio_file is not None:
             )
             elapsed = time.perf_counter() - started
         except ModelAccessError as exc:
-            status.update(label="Sign in required", state="error")
+            # expanded=True on every error update, not just the success one's
+            # expanded=False: update() with expanded=None clears the field,
+            # and the 1.63 expander resets its open state to `expanded ??
+            # false` whenever the label changes -- so a bare label change
+            # collapsed the box over the st.error it was about to hold,
+            # leaving "Sign in required" as a one-line header with the three
+            # steps behind a click.
+            status.update(label="Sign in required", state="error", expanded=True)
             st.error(str(exc), icon=":material/lock:")
         except ModelWeightsError as exc:
-            status.update(label="Incompatible checkpoint", state="error")
+            status.update(label="Incompatible checkpoint", state="error", expanded=True)
             st.error(str(exc), icon=":material/extension_off:")
         except Exception as exc:  # noqa: BLE001 - shown to the user as-is
-            status.update(label="Transcription failed", state="error")
+            status.update(label="Transcription failed", state="error", expanded=True)
             st.error(f"{type(exc).__name__}: {exc}", icon=":material/error:")
         else:
             result = Transcript(

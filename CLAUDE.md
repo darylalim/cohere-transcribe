@@ -512,6 +512,10 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   generation time; the status would otherwise read "Done in 2.1s" after a multi-minute first-run
   download. Note that the status block is written under `if run and ...`, so it is absent from every
   rerun that did not press Transcribe — that is why the metrics below render from `result` instead.
+  The three error branches pass `expanded=True` to `status.update`, and it is not redundant with
+  the `expanded=True` the block opens with: `update()` with no `expanded=` clears the field, and
+  the 1.63 expander resets its open state to `expanded ?? false` whenever the label changes, so a
+  bare `label="Sign in required"` collapsed the box over the sign-in steps it had just drawn.
 - **The transcript renders through `st.text`, not `st.markdown`.** It is uncontrolled model output and
   the product is a verbatim transcript: a hallucinated `*music*` renders italic with the asterisks
   gone, a leading `- ` becomes a bullet, `$5-$10` renders as math — while the Text download hands over
