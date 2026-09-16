@@ -150,10 +150,13 @@ the layers above. All are cheap, and all were invisible to every job that runs o
   environment.
 - **`streamlit_app.py` actually runs.** Nothing else executes it — `test_pure.py` imports only
   `utils`, ruff and ty are static, and `check_decoding` stops at `utils/`. It runs twice: once bare,
-  and once with a `Transcript` seeded into session state, because `streamlit_app.py:36` gates the
-  metrics row, the download buttons and the chunk table on that key and a bare run reaches none of
-  them. The second run is not redundant — mutating `st.dataframe(lazy=True)` to carry a nonexistent
-  keyword leaves the bare run green and turns the seeded one red, which is how the split was found.
+  and once with a `Transcript` seeded into session state, because the
+  `st.session_state.setdefault("result", None)` read at the top of `streamlit_app.py` gates the
+  transcript text, the metrics row, the download buttons and the chunk table on that key and a
+  bare run reaches none of them — the bordered box in the reading column it does reach, since the
+  placeholder branch draws the same one. The second run is not redundant — mutating
+  `st.dataframe(lazy=True)` to carry a nonexistent keyword leaves the bare run green and turns the
+  seeded one red, which is how the split was found.
 - **`.streamlit/config.toml` keeps its theme rules.** Only tables Streamlit accepts; a flat
   `[theme]` key only with a variant table beside it and only when flat is its sole registered
   home; no font URL or `fontFaces`; every key registered for the table it sits in. Each lands
@@ -334,8 +337,9 @@ tests/test_smoke.py        sentencepiece is installed; streamlit_app.py renders;
 
 Flow: `UploadedFile` (or `st.audio_input`) → `decode_to_mono16k` → flat `np.float32` array at 16 kHz +
 duration → `load_asr(repo_id)` (cached, one model resident) → `model.generate(...)` → mlx-audio
-`STTOutput` → `Transcript` dataclass parked in `st.session_state.result` → metrics, text, SRT/VTT
-downloads, chunk table. Session state holds one other key: `digest`, a `(file_id, digest)` pair for the
+`STTOutput` → `Transcript` dataclass parked in `st.session_state.result` → the transcript alone in
+the reading column on the right; metrics, SRT/VTT downloads and the chunk table in the input column
+beside it. Session state holds one other key: `digest`, a `(file_id, digest)` pair for the
 upload on screen, which is what decides whether a new upload invalidates `result` — see the
 load-bearing decisions below.
 
@@ -457,6 +461,23 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   `None`, which matches neither label, falls through to the `else` and draws the file uploader under
   a control with nothing selected. `tests/test_smoke.py` renders the page but never clicks a widget,
   so nothing here catches its removal.
+- **`layout="wide"`, one `st.columns([4, 5], gap="medium")`, and a reading surface capped at
+  `TRANSCRIPT_WIDTH`.** The centred default is a 736 px column on whatever the display is; on the
+  1920×1080 panel this runs on it left ~440 px blank a side and stacked the input above the
+  result, so the transcript box began 565 to 690 px down an ~840 px viewport with the downloads
+  and the chunk table below the fold. Wide alone is worse for reading — some 215 characters a
+  line — so the width is spent by the split: input, status, metrics, downloads and the chunk table
+  on the left, the transcript alone on the right, level with the title, 28 lines showing. The cap
+  is what makes the line length independent of the sidebar, a state 1.63 persists in
+  localStorage. The three source comments — on `layout=`, on `st.columns` and on
+  `TRANSCRIPT_WIDTH` — carry every measurement and the ratio and cap arguments; the numbers there
+  were measured in the browser, not derived from the column widths (the panel that proposed the
+  ratio had `[2, 3]` overflowing the chunk table; it fits exactly), so re-measure rather than
+  round. Two accepted costs are stated there too: `st.columns` has one breakpoint, so with the
+  sidebar open the right column clears the cap only from ~1835 px up and the measure follows the
+  window below that, down to ~45 characters at 1100; and `wrap=` is not passed on `st.columns` or
+  `st.container`, absent from 1.61, the floor, and present from 1.62. `tests/test_smoke.py` sees
+  the tree and none of the geometry; AppTest has no frontend.
 - **`st.audio` is passed an explicit `format=`, derived from the extension by `preview_mime`.** It
   defaults to `"audio/wav"` and nothing sniffs the container, so the bytes are served under that
   Content-Type. Eight of the nine `UPLOAD_TYPES` are not WAV, and browsers that pick a decoder from
@@ -607,3 +628,7 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   anyone checked: `uv.lock` pins 1.63.0, so `uv sync --locked` and all of CI install a version that
   satisfies any floor, and an undershooting one breaks only whoever resolves from `pyproject.toml`
   alone. Re-check it the same way when adding an API, rather than inferring it from a changelog.
+  The four layout parameters — `layout=`, `st.columns(gap=)`, `st.container(width=<int>)`,
+  `st.container(vertical_alignment=)` — were resolved against the same clean 1.57 through 1.61
+  installs, all present, so none moves the floor; `wrap=` on `st.columns` and `st.container` is
+  the one to refuse, absent from all five and present from 1.62.

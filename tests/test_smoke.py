@@ -78,9 +78,13 @@ def test_app_script_runs() -> None:
 def test_app_renders_a_finished_result() -> None:
     """The result half must render too, which an empty run does not reach.
 
-    `streamlit_app.py:36` reads `result` out of session state and everything
-    below -- the metrics row, the three download buttons, the chunk table -- is
-    gated on it. So an unseeded AppTest exercises only the input half, and a bad
+    The `st.session_state.setdefault("result", None)` read at the top of
+    `streamlit_app.py` pulls `result` out of session state, and everything gated
+    on it -- the transcript text, the metrics row, the three download buttons,
+    the chunk table -- is what a bare run never reaches. (The bordered box in
+    the reading column is drawn either way: the placeholder branch draws the
+    same `st.container(width=TRANSCRIPT_WIDTH)` with a caption in it.) So an
+    unseeded AppTest exercises the input half and an empty box, and a bad
     keyword in the result section passes it: measured, by mutating
     `st.dataframe(lazy=True)` to carry a nonexistent argument and watching
     `test_app_script_runs` stay green while this test turns red.

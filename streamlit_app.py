@@ -14,6 +14,18 @@ st.set_page_config(
     # and fetches nothing. tests/test_smoke.py renders the page but asserts
     # nothing about page config, so nothing here catches this being reverted.
     page_icon="🎙️",
+    # "wide", because the centred default is a 736 px column on whatever the
+    # display is. On the 1920x1080 panel this runs on, with the sidebar open,
+    # that was ~440 px of blank margin either side, and stacking the input
+    # above the result put the top of the transcript box ~565 px down an
+    # ~840 px viewport with nothing above it but an empty uploader, and ~690
+    # after a real run, with the player and the status box above it -- 150 to
+    # 270 px of transcript showing, the downloads and the chunk table below
+    # the fold. Wide alone would be worse for reading: ~1420 px of st.text,
+    # some 215 characters a line at the glyph width measured under Result.
+    # The width is spent by the two columns under Input; the reading surface
+    # is capped by TRANSCRIPT_WIDTH under Result.
+    layout="wide",
 )
 
 from utils.audio import (
@@ -88,37 +100,62 @@ with st.sidebar:
 
 # --- Input ----------------------------------------------------------------
 
-st.title("Cohere Transcribe")
-st.caption(
-    "Speech to text running locally on Apple Silicon through MLX. "
-    "Nothing is uploaded anywhere."
-)
+# Input on the left; the transcript alone on the right, where it starts level
+# with the title instead of under everything that produced it. [4, 5] and not
+# [1, 1] or [2, 3]: with the sidebar open the two columns measure 628 and
+# 789 px (1417 after the 32 px gap: 1460 nominal, less the scrollbar). The
+# right has to clear the cap on the transcript box under Result, so the
+# measure is the same whether the sidebar is open or collapsed -- [1, 1]
+# gives it ~708, short of the cap, and the line length would follow the
+# sidebar. [2, 3] clears it with 113 px to spare that the box cannot use,
+# and the left is the side with a use for the slack: the chunk table draws
+# its two auto-sized number columns and its 400 px "large" text column in
+# 517 px, which [2, 3] meets with nothing left over (517 measured against
+# 517) and [4, 5] with 77 px. gap="medium" (2rem): at "small" the metric
+# cards' border sits 1rem from the transcript's. The split has exactly one
+# breakpoint, the 640 px at which st.columns stacks it, input first -- the
+# order the page had -- and nothing native adds a second: with the sidebar
+# open the right column is (viewport - 503) x 5/9, so it clears the cap only
+# from ~1835 px up, and below that the measure follows the window -- ~74
+# characters at 1440, ~45 at 1100 (measured), where the metric cards break
+# onto two rows. A portrait 1080 px display sits in that band. The 1920
+# panel is the target, and that is the accepted cost. No wrap=: it is absent
+# from 1.61, the floor, and 1.62 is where it lands.
+left, right = st.columns([4, 5], gap="medium")
 
-# required=True, because single-selection segmented controls are deselectable by
-# default: clicking the lit segment returns None, which falls through to the else
-# below and draws the uploader under a control with nothing selected.
-mode = st.segmented_control(
-    "Input",
-    ["Upload a file", "Record"],
-    default="Upload a file",
-    required=True,
-    label_visibility="collapsed",
-)
+with left:
+    st.title("Cohere Transcribe")
+    st.caption(
+        "Speech to text running locally on Apple Silicon through MLX. "
+        "Nothing is uploaded anywhere."
+    )
 
-if mode == "Record":
-    audio_file = st.audio_input("Recording")
-else:
-    audio_file = st.file_uploader("Audio file", type=UPLOAD_TYPES)
-    if audio_file is not None:
-        # format= is not inferred: st.audio defaults it to "audio/wav" and hands
-        # it straight to the media file manager, which serves the bytes under
-        # that Content-Type. Eight of the nine UPLOAD_TYPES are not WAV, and
-        # browsers that pick a decoder from the header rather than sniffing the
-        # container play none of them — silently, since the file still
-        # transcribes fine while only the preview player looks broken. Derived
-        # from the extension rather than read off UploadedFile.type; see
-        # preview_mime for why that attribute cannot do the job.
-        st.audio(audio_file, format=preview_mime(audio_file.name))
+    # required=True, because single-selection segmented controls are deselectable
+    # by default: clicking the lit segment returns None, which falls through to
+    # the else below and draws the uploader under a control with nothing selected.
+    mode = st.segmented_control(
+        "Input",
+        ["Upload a file", "Record"],
+        default="Upload a file",
+        required=True,
+        label_visibility="collapsed",
+    )
+
+    if mode == "Record":
+        audio_file = st.audio_input("Recording")
+    else:
+        audio_file = st.file_uploader("Audio file", type=UPLOAD_TYPES)
+        if audio_file is not None:
+            # format= is not inferred: st.audio defaults it to "audio/wav" and
+            # hands it straight to the media file manager, which serves the
+            # bytes under that Content-Type. Eight of the nine UPLOAD_TYPES are
+            # not WAV, and browsers that pick a decoder from the header rather
+            # than sniffing the container play none of them — silently, since
+            # the file still transcribes fine while only the preview player
+            # looks broken. Derived from the extension rather than read off
+            # UploadedFile.type; see preview_mime for why that attribute cannot
+            # do the job.
+            st.audio(audio_file, format=preview_mime(audio_file.name))
 
 
 def source_key(file) -> str:
@@ -172,7 +209,7 @@ if result and audio_file is not None:
         # otherwise keep naming a file the player is no longer showing.
         result.source_name = audio_file.name
 
-run = st.button(
+run = left.button(
     "Transcribe",
     type="primary",
     icon=":material/graphic_eq:",
@@ -180,8 +217,19 @@ run = st.button(
     disabled=audio_file is None,
 )
 
-status_slot = st.container()
-result_slot = st.container()
+# Named surfaces rather than a `with left:` around each block: the status is
+# written from inside the transcription block, the numbers and the transcript
+# from the result section, and each has to land in its column in this order.
+# The status is written only under `if run`, so on any other rerun it is
+# absent and the summary sits directly under the button.
+status_slot = left.container()
+# Metrics, downloads and the chunk table sit beside the inputs, not under the
+# text. That is what empties the reading column of everything but the
+# transcript, so it starts ~112 px down instead of ~565, and it is what keeps
+# the downloads at the top of the page after thousands of words rather than
+# past all of them: reaching them is the Home key, not a scroll.
+summary_slot = left.container()
+transcript_slot = right.container()
 
 # --- Transcription --------------------------------------------------------
 
@@ -250,8 +298,38 @@ if run and audio_file is not None:
 
 # --- Result ---------------------------------------------------------------
 
+# Capped, because the reading column is 789 px with the sidebar open and
+# 956 px with it collapsed -- a state 1.63 persists in localStorage, so a
+# user who collapses it once would otherwise read ~140 characters a line on
+# every later load. 740 leaves 708 px of text inside the border: ~107
+# characters of 16 px Source Sans at the ~6.6 px a glyph a sample transcript
+# measured in the browser (7.5 was the estimate; re-measure rather than
+# reason from it), and the same measure in both sidebar states at 1920, since
+# the column clears the cap in either. In page flow, not a height=<int>
+# scroll box: a fixed pane is right for exactly one viewport height -- a
+# 560 px one shows 20 lines here against 28 -- and puts thousands of words
+# behind a second scrollbar. The price is 49 px of the column unused with the
+# sidebar open and 216 collapsed.
+TRANSCRIPT_WIDTH = 740
+
 if result:
-    with result_slot:
+    with transcript_slot, st.container(border=True, width=TRANSCRIPT_WIDTH):
+        # st.text, not st.markdown: this is uncontrolled model output and the
+        # product is a verbatim transcript. Markdown eats what the decoder
+        # emits — a hallucinated `*music*` renders italic with the asterisks
+        # gone, a leading "- " becomes a bullet, "$5-$10" renders as math —
+        # while the Text download beside it writes the unparsed string, so the
+        # file and the screen stop being the same characters. st.text is not
+        # monospace (that is st.code), so nothing about the look changes, and
+        # its own dedent().strip() is a no-op because Transcript already
+        # holds the stripped string — which is also what keeps a
+        # whitespace-only result falsy here and on the download button.
+        if result.text:
+            st.text(result.text, width="stretch")
+        else:
+            st.markdown("_No speech detected._")
+
+    with summary_slot:
         with st.container(horizontal=True):
             st.metric(
                 "Audio",
@@ -273,29 +351,14 @@ if result:
                 help="Audio seconds transcribed per second of wall clock (RTFx).",
             )
 
-        with st.container(border=True):
-            # st.text, not st.markdown: this is uncontrolled model output and the
-            # product is a verbatim transcript. Markdown eats what the decoder
-            # emits — a hallucinated `*music*` renders italic with the asterisks
-            # gone, a leading "- " becomes a bullet, "$5-$10" renders as math —
-            # while the Text download below writes the unparsed string, so the
-            # file and the screen stop being the same characters. st.text is not
-            # monospace (that is st.code), so nothing about the look changes, and
-            # its own dedent().strip() is a no-op because Transcript already
-            # holds the stripped string — which is also what keeps a
-            # whitespace-only result falsy here and on the download button.
-            if result.text:
-                st.text(result.text, width="stretch")
-            else:
-                st.markdown("_No speech detected._")
-            st.caption(f"{LANGUAGES[result.language]} · {result.source_name}")
-
         # Built once here rather than inline in the buttons, which re-serialised
         # the whole segment list on every rerun even while disabled.
         srt = to_srt(result.segments) if result.segments else ""
         vtt = to_vtt(result.segments) if result.segments else ""
 
-        with st.container(horizontal=True):
+        # vertical_alignment="center", for the caption: it lines up with the
+        # buttons' text, where at the default its top sits on theirs.
+        with st.container(horizontal=True, vertical_alignment="center"):
             # on_click="ignore" keeps these frontend-only. Every payload comes
             # from st.session_state.result, so the default "rerun" re-executes
             # the whole script to arrive at an identical screen — rebuilding srt
@@ -329,6 +392,12 @@ if result:
                 disabled=not vtt,
                 on_click="ignore",
             )
+            # Out of the transcript box, where a long result put it thousands
+            # of words down, and beside the buttons whose file stems it names
+            # -- while it fits: past ~60 characters, which a Zoom or Voice
+            # Memos filename reaches, the row wraps it onto its own line under
+            # them.
+            st.caption(f"{LANGUAGES[result.language]} · {result.source_name}")
 
         if len(result.segments) > 1:
             # `lazy=True`, not a hand-rolled gate. st.expander computes and ships
@@ -370,3 +439,10 @@ if result:
                         "text": st.column_config.TextColumn("Text", width="large"),
                     },
                 )
+else:
+    # The same box at the same width, so the split reads as a page with an
+    # empty reading surface rather than half a page. One caption, and no
+    # "press Transcribe" in it: this branch is also reached on the rerun
+    # whose press just failed, beside the error status that says so.
+    with transcript_slot, st.container(border=True, width=TRANSCRIPT_WIDTH):
+        st.caption("The transcript appears here.")
