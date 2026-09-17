@@ -119,6 +119,23 @@ primaryColor = "#ca492d"
 [server]
 # An hour of 48 kHz stereo WAV runs well past Streamlit's 200 MB default.
 maxUploadSize = 1000
+# Loopback only. Unset, Streamlit 1.63 binds the "::" dual-stack wildcard and
+# prints a "Network URL": measured, port 8501 answered at this machine's LAN
+# address with the macOS application firewall off. That hands anyone on the same
+# network the 1000 MB upload endpoint, the model, and the Checkpoint field --
+# load_asr is a process-global cache_resource(max_entries=1), so a visitor typing
+# any repo there evicts the resident model mid-session and starts a
+# multi-gigabyte Hub download on this machine's cached credentials. Nothing here
+# needs the reach: st.audio_input wants a secure context, which http://192.168.x.x
+# is not, so Record never worked from another device. "localhost", not
+# "127.0.0.1": Streamlit binds AF_INET 127.0.0.1 either way, but the address is
+# also what it opens the browser at, and a new origin drops the theme choice and
+# the sidebar state localStorage holds. Setting it also takes the startup banner
+# down the single-URL branch, which under --server.headless true (off by default
+# on macOS; Streamlit flips it on only on Linux with no DISPLAY) skips the GET to
+# checkip.amazonaws.com it otherwise makes for an "External URL". Pass
+# --server.address 0.0.0.0 on the command line to open it deliberately.
+address = "localhost"
 
 [browser]
 # Defaults to true, and the app's own source never shows it: the flag is shipped to

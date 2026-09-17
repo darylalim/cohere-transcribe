@@ -1,5 +1,4 @@
 import hashlib
-import re
 import time
 
 import streamlit as st
@@ -12,8 +11,9 @@ st.set_page_config(
     # fetches from Google -- once per cold cache, not per load, but a request
     # made by the tab icon on an app whose whole pitch is that nothing leaves
     # the machine. An emoji is rendered into an inline data: URL by the frontend
-    # and fetches nothing. tests/test_smoke.py renders the page but asserts
-    # nothing about page config, so nothing here catches this being reverted.
+    # and fetches nothing. AppTest discards the page-config message, so
+    # tests/test_smoke.py records this call on the way through and asserts the
+    # icon passes Streamlit's own is_emoji gate.
     page_icon="🎙️",
     # "wide", because the centred default is a 736 px column on whatever the
     # display is. On the 1920x1080 panel this runs on, with the sidebar open,
@@ -32,6 +32,7 @@ st.set_page_config(
 from utils.audio import (
     UPLOAD_TYPES,
     decode_to_mono16k,
+    escape_markdown,
     format_duration,
     preview_mime,
     to_srt,
@@ -87,7 +88,16 @@ with st.sidebar:
             "runtime and will be rejected here.",
         )
         max_tokens = st.number_input(
-            "Max tokens per chunk", min_value=64, max_value=1024, value=256, step=64
+            "Max tokens per chunk",
+            min_value=64,
+            max_value=1024,
+            value=256,
+            step=64,
+            help="The decoder stops after this many tokens in a chunk and keeps "
+            "what it has, with no warning: the text ends mid-sentence at a chunk "
+            "boundary and picks up at the next. Raise it if fast or dense speech "
+            "comes back cut short that way. Leave it otherwise -- the cap is also "
+            "what stops a hallucination over silence from running on.",
         )
         vad_merge_gap_s = st.slider(
             "VAD merge gap (seconds)",
@@ -97,35 +107,43 @@ with st.sidebar:
             0.1,
             help="Speech runs closer together than this are merged into one chunk.",
             disabled=not use_vad,
+            # The float default is "%0.2f", so a 0.1 step showed "1.00" on the
+            # thumb and "0.10" / "3.00" at the ticks. Same spelling as the chunk
+            # table's columns. It joins the element id, so a session that moved
+            # the slider sees it reset once when this lands.
+            format="%.1f",
         )
 
 # --- Input ----------------------------------------------------------------
 
 # Input on the left; the transcript alone on the right, where it starts level
 # with the title instead of under everything that produced it. [4, 5] and not
-# [1, 1] or [2, 3]: with the sidebar open the two columns measure 628 and
-# 789 px (1417 after the 32 px gap: 1460 nominal, less the scrollbar). The
-# right has to clear the cap on the transcript slot below, so the measure
-# is the same whether the sidebar is open or collapsed -- [1, 1] gives it
-# ~708, short of the cap, and the line length would follow the sidebar.
-# [2, 3] clears it with 113 px to spare that the box cannot use, and the
-# left is the side with a use for the slack: the chunk table's grid needs
-# 497 px -- two auto-sized number columns and the 400 px "large" text
-# column, read off its scrollWidth in a column too narrow for it -- and
-# gets 517 under [2, 3] and 581 under [4, 5]: 20 px against 84 before a
-# horizontal scrollbar. gap="medium" (2rem): at "small" the metric cards'
-# border sits 1rem from the transcript's. The split has exactly one
-# breakpoint, the 640 px at which st.columns stacks it, left column first.
-# That keeps the input half in the order the page had and moves the
-# transcript below the metrics, the downloads and the chunk table, where it
-# used to sit between the metrics and the downloads -- the accepted cost at
-# phone width, since nothing native adds a second breakpoint. Above it, with
-# the sidebar open, the right column is (viewport - 503) x 5/9, so it clears
-# the cap only from ~1835 px up, and below that the measure follows the
-# window -- ~74 characters at 1440, ~45 at 1100 (measured), where the metric
-# cards break onto two rows. A portrait 1080 px display sits in that band.
-# The 1920 panel is the target, and that is the other accepted cost. No
-# wrap=: it is absent from 1.61, the floor, and 1.62 is where it lands.
+# [1, 1] or [2, 3]: with the sidebar open the two columns measure 628 and 789
+# px (1417 after the 32 px gap: 1460 nominal, less the scrollbar). The right
+# has to clear the cap on the transcript slot below, so the measure is the
+# same whether the sidebar is at its 300 px default or collapsed -- [1, 1]
+# gives it ~708, short of the cap, and the line length would follow the
+# sidebar. [2, 3] clears it with 113 px to spare that the box cannot use, and
+# the left is the side with a use for the slack: the chunk table's grid needs
+# 497 px -- two auto-sized number columns and the 400 px "large" text column,
+# read off its scrollWidth in a column too narrow for it -- and gets 517 under
+# [2, 3] and 581 under [4, 5]: 20 px against 84 before a horizontal scrollbar.
+# gap="medium" (2rem): at "small" the metric cards' border sits 1rem from the
+# transcript's. The split has exactly one breakpoint, the 640 px at which
+# st.columns stacks it, left column first. That keeps the input half in the
+# order the page had and moves the transcript below the metrics, the downloads
+# and the chunk table, where it used to sit between the metrics and the
+# downloads -- the accepted cost at phone width, since nothing native adds a
+# second breakpoint. Above it, with the sidebar open at its default 300 px,
+# the right column is (viewport - 503) x 5/9, so it clears the cap only from
+# ~1835 px up, and below that the measure follows the window -- ~74 characters
+# at 1440, ~45 at 1100 (measured), where the metric cards break onto two rows.
+# A portrait 1080 px display sits in that band. The 503 embeds the 300, and
+# the sidebar drags to anywhere in 200-600, which 1.63 persists in
+# localStorage too, so the threshold moves with it -- ~2135 at 600, from the
+# formula rather than the browser (double-click on the handle resets it). The
+# 1920 panel is the target, and that is the other accepted cost. No wrap=: it
+# is absent from 1.61, the floor, and 1.62 is where it lands.
 left, right = st.columns([4, 5], gap="medium")
 
 with left:
@@ -187,7 +205,14 @@ def source_key(file) -> str:
     ``.streamlit/config.toml`` allows, the wrong one is a spare gigabyte.
 
     Cached against ``file_id`` as a pair rather than a dict, so there is no
-    eviction step whose necessity lives in a comment.
+    eviction step whose necessity lives in a comment. ``file_id`` is not among
+    the attributes the ``UploadedFile`` docstring lists, but it is what its
+    ``__eq__`` and both widgets' serde use, so it is read directly -- a
+    ``getattr`` default of ``None`` is the seed's own sentinel, so the hash
+    would be skipped and every such file would read as one source, keeping a
+    stale transcript under new audio: ``""`` against the seed, which then never
+    writes the cache, or the digest of whichever file was hashed last once a
+    real upload had put a pair there.
     """
     if file is None:
         return ""
@@ -234,20 +259,21 @@ status_slot = left.container()
 # the downloads at the top of the page after thousands of words rather than
 # past all of them: reaching them is the Home key, not a scroll.
 summary_slot = left.container()
-# Capped, because the reading column is 789 px with the sidebar open and
-# 956 px with it collapsed -- a state 1.63 persists in localStorage, so a
-# user who collapses it once would otherwise read ~140 characters a line on
-# every later load. 740 leaves 708 px of text inside the border: ~107
-# characters of 16 px Source Sans at the ~6.6 px a glyph a sample transcript
-# measured in the browser (7.5 was the estimate; re-measure rather than
-# reason from it), and the same measure in both sidebar states at 1920, since
-# the column clears the cap in either. In page flow, not a height=<int>
-# scroll box: a fixed pane is right for exactly one viewport height -- a
-# 560 px one shows 20 lines here against 28 -- and puts thousands of words
-# behind a second scrollbar. The price is 49 px of the column unused with the
-# sidebar open and 216 collapsed. The border and the cap sit on the slot
-# itself, so the placeholder and the transcript are drawn into one box and
-# cannot drift apart.
+# Capped, because the reading column is 789 px with the sidebar open at its
+# default width and 956 px with it collapsed -- a state 1.63 persists in
+# localStorage, so a user who collapses it once would otherwise read ~140
+# characters a line on every later load. Dragged wider it persists too, and
+# the column comment above carries how the thresholds move with it. 740 leaves
+# 708 px of text inside the border: ~107 characters of 16 px Source Sans at
+# the ~6.6 px a glyph a sample transcript measured in the browser (7.5 was the
+# estimate; re-measure rather than reason from it), and the same measure at
+# 1920 with the sidebar collapsed or at its default, since the column clears
+# the cap in either. In page flow, not a height=<int> scroll box: a fixed pane
+# is right for exactly one viewport height -- a 560 px one shows 20 lines here
+# against 28 -- and puts thousands of words behind a second scrollbar. The
+# price is 49 px of the column unused with the sidebar at its default and 216
+# collapsed. The border and the cap sit on the slot itself, so the placeholder
+# and the transcript are drawn into one box and cannot drift apart.
 TRANSCRIPT_WIDTH = 740
 transcript_slot = right.container(border=True, width=TRANSCRIPT_WIDTH)
 
@@ -259,6 +285,11 @@ if run and audio_file is not None:
             wall_clock = time.perf_counter()
             st.write("Decoding audio")
             waveform, duration_s = decode_to_mono16k(audio_file)
+            # Before load and generate, not in the else: below, which sits
+            # outside every except. file_id is not on UploadedFile's documented
+            # surface, and a read that raised there would cost this press's
+            # decode and generate before anything said why.
+            key = source_key(audio_file)
 
             st.write(f"Loading {repo_id}")
             st.caption(
@@ -296,7 +327,7 @@ if run and audio_file is not None:
             st.error(f"{type(exc).__name__}: {exc}", icon=":material/error:")
         else:
             result = Transcript(
-                source_key=source_key(audio_file),
+                source_key=key,
                 source_name=getattr(audio_file, "name", "recording"),
                 # Stripped once, here, rather than left to the renderer: st.text
                 # runs its body through textwrap.dedent().strip(), and decoders
@@ -409,13 +440,10 @@ if result:
             # of words down, and beside the buttons whose file stems it names
             # -- while it fits: past ~60 characters, which a Zoom or Voice
             # Memos filename reaches, the row wraps it onto its own line under
-            # them. st.caption is Markdown and the filename is not ours:
-            # `take*2*.wav` showed an italic "take2.wav" beside buttons that
-            # write take*2*.txt, the screen/file mismatch st.text exists to
-            # prevent one box over. CommonMark lets a backslash escape any
-            # ASCII punctuation, so every one is escaped rather than a list of
-            # the ones that happen to be markup today.
-            name = re.sub(r"([!-/:-@\[-`{-~])", r"\\\1", result.source_name)
+            # them. Escaped, because st.caption is Markdown and the filename
+            # is not ours; escape_markdown carries the failure and the one
+            # pass the escape cannot reach.
+            name = escape_markdown(result.source_name)
             st.caption(f"{LANGUAGES[result.language]} · {name}")
 
         if len(result.segments) > 1:
@@ -438,8 +466,29 @@ if result:
             # the automatic path treats as "everything else" and loads eagerly at any
             # size; the 150,000-row rule it documents covers pandas, polars and Arrow
             # inputs only.
+            #
+            # key=, because the label carries the chunk count and the 1.63 expander
+            # resets its open state to `expanded ?? false` whenever its label changes
+            # -- the effect the status box above answers with expanded=True. Here the
+            # wanted state is the user's: open the table to see how VAD splits a
+            # file, flip the toggle, press Transcribe, and the new count closed it,
+            # while a re-run whose count happened to match left it open. Without a
+            # key a non-tracking expander gets no block id, so the frontend has
+            # nowhere to keep the toggle; with one the id is built from the key and
+            # type=, never the label, so it survives every relabel while the
+            # expander stays on screen. It is pruned by any run the expander is
+            # absent from -- a new file dropped, or a one-segment result -- so a new
+            # source still starts closed. No on_change: the toggle is frontend
+            # element state and never reaches the server, so this costs none of the
+            # reruns lazy=True was chosen to avoid. No key on the dataframe below:
+            # st.dataframe consults key only under on_select, so the key="orders"
+            # the bundled Streamlit skill doc puts on a plain dataframe ships no
+            # id, no st-key- class and no session-state entry here. Lazy delivery
+            # is keyed on the delta path.
             with st.expander(
-                f"{len(result.segments)} chunks", icon=":material/segment:"
+                f"{len(result.segments)} chunks",
+                icon=":material/segment:",
+                key="chunks",
             ):
                 st.caption(
                     "Chunk boundaries from long-form splitting, not word-level "
@@ -450,7 +499,6 @@ if result:
                     result.segments,
                     lazy=True,
                     hide_index=True,
-                    key="segments",
                     column_order=["start", "end", "text"],
                     column_config={
                         "start": st.column_config.NumberColumn("Start", format="%.1fs"),

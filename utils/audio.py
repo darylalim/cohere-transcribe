@@ -1,7 +1,8 @@
-"""Audio decoding and subtitle formatting helpers."""
+"""Audio decoding, subtitle formatting and caption escaping helpers."""
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -157,6 +158,34 @@ def format_duration(seconds: float) -> str:
     if hours:
         return f"{hours}:{minutes:02d}:{secs:02d}"
     return f"{minutes}:{secs:02d}"
+
+
+def escape_markdown(text: str) -> str:
+    """Escape a string that is not ours so Markdown renders it verbatim.
+
+    For the filename caption in streamlit_app.py: ``st.caption`` is Markdown and
+    the filename is the user's, so ``take*2*.wav`` showed an italic "take2.wav"
+    beside download buttons that write ``take*2*.txt`` -- the screen/file
+    mismatch the transcript's ``st.text`` exists to prevent, one box over.
+    CommonMark lets a backslash escape any ASCII punctuation, so every one is
+    escaped rather than a list of the ones that happen to be markup today.
+
+    The escape reaches the parser only. Two of the frontend's remark passes run
+    over the parsed text nodes, where ``\\-\\-`` is already ``--``: a typographer
+    turns a whitespace-bounded ``--``, ``->``, ``<-``, ``<->``, ``>=``, ``<=``
+    or ``~=`` into its glyph (``take -- two.wav`` captions as ``take — two.wav``;
+    ``meeting--final.wav`` is untouched), and a second pass turns
+    ``:streamlit:`` into the logo. Accepted, not fixed: it swaps a glyph for a
+    look-alike, the download stems are built from ``source_name`` and never see
+    the caption, and both fixes cost every result to cover a rare name -- a
+    code span renders the filename at 0.75em of the caption in the code font on
+    a pill, and ``st.text`` renders it at body size and full colour -- 16 px at
+    opacity 1 beside 14 px button labels the caption matches at 0.6 -- with its
+    baseline 1.4 px under theirs, where the caption's lands on them; the row's
+    centring holds either way. ``tests/test_smoke.py`` reads the raw Markdown
+    source back, so it pins this escape and cannot see the typographer.
+    """
+    return re.sub(r"([!-/:-@\[-`{-~])", r"\\\1", text)
 
 
 def _timestamp(seconds: float, separator: str) -> str:

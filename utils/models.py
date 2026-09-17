@@ -43,7 +43,24 @@ LANGUAGES: dict[str, str] = {
 
 @dataclass
 class Transcript:
-    """One finished transcription, held in session state across reruns."""
+    """One finished transcription, held in session state across reruns.
+
+    That includes the rerun the file watcher offers after a save. Streamlit
+    reuses the session, so the instance survives -- but before that run
+    ``LocalSourcesWatcher`` pops every watched module from ``sys.modules``,
+    whichever file was saved, so this module re-executes and ``Transcript``
+    becomes a new class while the held instance keeps the old one. Nothing
+    notices today: ``streamlit_app.py`` reads fields and the two properties and
+    assigns ``source_name``, all resolved on the old class. A field added here
+    and read at render time raises ``AttributeError`` in every session open at
+    the save, and an edit to ``speedup`` or ``stem`` shows no effect there;
+    either reads as a bug in the edit. A reload is the fix -- the session is
+    replaced, and ``load_asr`` is process-global, so the model stays resident
+    and only that tab's transcript goes. Not an ``isinstance`` guard or a
+    rehydration on read: dropping a stale instance discards the transcript,
+    which session state here exists to keep. Reproduced by popping ``utils``
+    and ``utils.*`` from ``sys.modules`` between two seeded AppTest runs.
+    """
 
     source_key: str
     source_name: str
@@ -235,11 +252,23 @@ def load_asr(repo_id: str):
         # Matched by type, not by substring. A "401" anywhere in an unrelated
         # message — a shard name like model-00401-of-00500 — used to be enough
         # to send a disk-full or corrupt-download error to `hf auth login`.
+        #
+        # "Press Transcribe again", not "reload this page". A reload changes
+        # nothing on the server: cache_resource stores nothing when this
+        # function raises, and huggingface_hub re-reads the token file on every
+        # request (the one cache downstream of that read is keyed on the file's
+        # current token, so a fresh `hf auth login` misses it), so a re-press
+        # picks up the new credentials just as well. What a reload does do is
+        # start a new session: the upload or recording is gone, every sidebar
+        # setting is back at its default, and a transcript already on screen is
+        # dropped. This is the setup path: whoever has not yet both accepted the
+        # terms and logged in lands here, on every press until both are done --
+        # so under a reload that cost would be paid each time, not once.
         raise ModelAccessError(
             f"`{repo_id}` is gated, or not visible to this account.\n\n"
             f"1. Accept the terms at https://huggingface.co/{repo_id}\n"
             "2. Run `hf auth login` in this environment\n"
-            "3. Reload this page"
+            "3. Press Transcribe again"
         ) from exc
 
     _patch_vad_dtype()
