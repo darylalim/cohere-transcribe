@@ -75,9 +75,13 @@ required-version = "==0.16.1"
 
 [tool.ruff.lint]
 # E402 is absent from the default rule set, so this is a no-op today and a guard
-# against the release that adds it. Imports in streamlit_app.py sit below
-# st.set_page_config because it must be the first Streamlit call, and in
-# verify_transcription.py below warnings.filterwarnings. Hoisting them to the top
-# is what E402 asks for and it breaks both files at runtime, while lint reports
-# success -- the one failure mode a linter should never be able to cause.
+# against the release that adds it. Both files carry E402 hits by convention, not
+# necessity. streamlit_app.py imports utils below st.set_page_config -- this
+# file's own ordering: no release from 1.57 up enforces it, and the bundled
+# templates keep their imports above the call. verify_transcription.py imports
+# below warnings.filterwarnings("ignore"), which is global and runs before run()
+# wherever the imports sit: the three under it emit nothing at import (measured
+# under -W error), and the function-local mlx_audio imports are under it either
+# way. Hoisting them is what E402 asks for; the ignore stays so a rule landing in
+# the default set cannot turn a chosen order into a red lint job.
 extend-ignore = ["E402"]

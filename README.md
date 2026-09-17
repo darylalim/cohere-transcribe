@@ -57,10 +57,13 @@ check here that runs on Linux, though `uv sync` still has to succeed first — s
 in practice that means Apple Silicon or Linux, as mlx publishes no Intel-macOS
 wheel.
 
-The same command also runs `tests/test_smoke.py`, which covers the two things that
-fall between the layers and still need no model: that the `[stt]` extra put
-`sentencepiece` in the environment, and that `streamlit_app.py` renders — bare,
-and again with a finished transcript seeded into session state.
+The same command also runs `tests/test_smoke.py`, which covers what falls between
+the layers and still needs no model: that the `[stt]` extra put `sentencepiece`
+in the environment; that `streamlit_app.py` renders, bare and with a finished
+transcript seeded into session state, and that the page's own rules — the input
+mode stays lit, Transcribe waits for an upload, a re-dropped file keeps its
+transcript — hold when AppTest drives the widgets; and that
+`.streamlit/config.toml` keeps the rules its comments state.
 
 The slow one needs weights:
 
@@ -183,12 +186,14 @@ and `decode_to_mono16k` treats an empty result as a failure to retry.
 
 ```text
 streamlit_app.py           UI, session state, error presentation
-utils/audio.py             decode to mono 16 kHz float32; SRT/VTT formatting
+utils/audio.py             decode to mono 16 kHz float32; SRT/VTT formatting;
+                           caption escaping
 utils/models.py            checkpoint registry, language table, cached loader,
                            mlx-audio VAD shim
 verify_transcription.py    integration test against known ground truth
 tests/test_pure.py         unit tests for the pure functions — no model needed
-tests/test_smoke.py        sentencepiece is installed; the app renders
+tests/test_smoke.py        sentencepiece is installed; the app renders and its
+                           rules hold under AppTest; config.toml keeps its rules
 ```
 
 ## License

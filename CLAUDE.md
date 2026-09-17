@@ -117,8 +117,8 @@ the integration test structurally cannot reach:
   both files byte for byte.
 
 The rest is app-only code `verify_transcription.py` never touches at all — `format_duration`,
-`_timestamp`, `Transcript.speedup` and `Transcript.stem`. That is about a third of the file, so do
-not read the three categories above as a closed charter for what belongs here.
+`escape_markdown`, `_timestamp`, `Transcript.speedup` and `Transcript.stem`. That is about a third
+of the file, so do not read the three categories above as a closed charter for what belongs here.
 
 Both thresholds live in `verify_transcription.py` as `MAX_WER` and `MAX_NON_ASCII` so the unit tests
 can import the real numbers. Re-typing them in the test would have let a loosened threshold pass a
@@ -139,8 +139,8 @@ Note that `_cues` handles `segments=None` via `for seg in segments or []` while 
 caller — `Transcript.segments` defaults to a list and `output.segments or []` coerces at
 construction — so it is untested on purpose rather than by oversight.
 
-**`tests/test_smoke.py` — no model either, and no pure functions.** Three things that fall between
-the layers above. All are cheap, and all were invisible to every job that runs on push.
+**`tests/test_smoke.py` — no model either, and no pure functions.** What falls between the layers
+above. All of it is cheap, and all of it was invisible to every job that runs on push.
 
 - **`sentencepiece` is present.** The `[stt]` extra is the only thing naming it, and its absence
   surfaces four gigabytes in, *after* `load_weights(strict=True)` has already passed — the
@@ -149,17 +149,36 @@ the layers above. All are cheap, and all were invisible to every job that runs o
   `find_spec` rather than an import, because the question is whether `uv sync` put it in the
   environment.
 - **`streamlit_app.py` actually runs.** Nothing else executes it — `test_pure.py` imports only
-  `utils`, ruff and ty are static, and `check_decoding` stops at `utils/`. It runs twice: once bare,
-  and once with a `Transcript` seeded into session state, because the
+  `utils`, ruff and ty are static, and `check_decoding` stops at `utils/`. It runs bare, and with a
+  `Transcript` seeded into session state through `_seeded()`, because the
   `st.session_state.setdefault("result", None)` read at the top of `streamlit_app.py` gates the
   transcript text, the metrics row, the download buttons and the chunk table on that key and a
   bare run reaches none of them — the bordered box in the reading column it does reach, since
-  `transcript_slot` carries the border and the cap and the placeholder branch writes into it. The second run is not redundant — mutating
-  `st.dataframe(lazy=True)` to carry a nonexistent keyword leaves the bare run green and turns the
-  seeded one red, which is how the split was found.
-- **`.streamlit/config.toml` keeps its theme rules.** Only tables Streamlit accepts; a flat
-  `[theme]` key only with a variant table beside it and only when flat is its sole registered
-  home; no font URL or `fontFaces`; every key registered for the table it sits in. Each lands
+  `transcript_slot` carries the border and the cap and the placeholder branch writes into it. The
+  seeded run is not redundant — mutating `st.dataframe(lazy=True)` to carry a nonexistent keyword
+  leaves the bare run green and turns the seeded one red, which is how the split was found. It
+  checks the keyword, not the delivery: AppTest keeps every dataframe eager, so no seeded row count
+  reaches the lazy path.
+- **The page's own rules hold when the widgets are driven.** AppTest can upload, clear, select and
+  set values, and every one of these was asserted nowhere before it did: `required=True` on the
+  mode control, Transcribe disabled until an upload exists, `st.audio` served under the extension's
+  MIME rather than `audio/wav` or `.bin`, the digest rule that keeps a transcript across a re-drop,
+  a rename, a cleared uploader and a switch to Record and drops it only on new bytes, the three
+  downloads carrying `on_click="ignore"` and going dark on a no-speech result, the six sidebar
+  defaults a Transcribe press consumes (five reach `generate`, `repo_id` reaches `load_asr`), the
+  split's structure and none of its geometry, the transcript and the escaped filename reaching the
+  screen as the same characters the downloads write, and `page_icon` passing `is_emoji`. Where
+  AppTest cannot drive the rule — it cannot deselect a segmented control, and it discards the
+  page-config message — the matching bullet under Load-bearing decisions says what is asserted
+  instead. Each was verified by mutation: the change it guards against turns its own test red while
+  the two rendering tests stay green — with one exception, the `st.text` → `st.markdown` swap, which
+  `test_app_renders_a_finished_result` also catches through its `columns[1].text` assertion; the
+  verbatim test is what pins the characters rather than the element type. None presses Transcribe.
+- **`.streamlit/config.toml` keeps its rules.** `gatherUsageStats` is false, read from the raw
+  toml rather than `config.get_option`, which also reads `~/.streamlit/config.toml`. For the theme:
+  only tables Streamlit accepts; a flat `[theme]` key only with a variant table beside it and only
+  when flat is its sole registered home; no font URL or `fontFaces`; every key registered for the
+  table it sits in. Each lands
   silently, with one exception the test asserts first so its verdict cannot depend on test order:
   an invalid table such as `[theme.sidebar.dark]` makes Streamlit refuse to start, and
   `get_options_for_section` parses the cwd config lazily, so consulting it before the section
@@ -176,8 +195,8 @@ the layers above. All are cheap, and all were invisible to every job that runs o
   must *pass*. Values are not checked; the ratios are the file's argument, re-measured when a
   value changes.
 
-This is not the mocked-`generate` test `test_pure.py` rules out. AppTest stops at the first render
-and never presses Transcribe, so `load_asr` is never called and nothing imports `mlx_audio` — which
+This is not the mocked-`generate` test `test_pure.py` rules out. AppTest drives the widgets but
+never presses Transcribe, so `load_asr` is never called and nothing imports `mlx_audio` — which
 is also what keeps the file inside the ubuntu `test` job's charter.
 
 ### CI
@@ -327,12 +346,14 @@ was a session-keyed loop guard defending against its own ability to trap a turn.
 
 ```
 streamlit_app.py           UI, session state, error presentation
-utils/audio.py             decode to mono 16 kHz float32; SRT/VTT formatting
+utils/audio.py             decode to mono 16 kHz float32; SRT/VTT formatting; caption escaping
 utils/models.py            checkpoint registry, language table, cached loader, mlx-audio VAD shim
 verify_transcription.py    integration test against known ground truth
 tests/test_pure.py         unit tests for the pure functions, and for the test oracle above
-tests/test_smoke.py        sentencepiece is installed; streamlit_app.py renders; config.toml keeps its theme rules
-.streamlit/config.toml     the 1000 MB upload ceiling, usage stats off, [theme.dark], a one-key [theme.light]
+tests/test_smoke.py        sentencepiece is installed; streamlit_app.py renders and its rules hold
+                           under AppTest; config.toml keeps its rules
+.streamlit/config.toml     the 1000 MB upload ceiling, loopback bind, usage stats off,
+                           [theme.dark], a one-key [theme.light]
 ```
 
 Flow: `UploadedFile` (or `st.audio_input`) → `decode_to_mono16k` → flat `np.float32` array at 16 kHz +
@@ -452,15 +473,27 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
 - **An empty waveform is a failure, not silence.** `decode_to_mono16k` retries through ffmpeg on
   `size == 0` and only then raises. The broad `except Exception` around `audio_read` is deliberate:
   mlx-audio raises `ValueError`, `miniaudio.DecodeError` and `RuntimeError` for the same condition.
-- **Imports sit below `st.set_page_config` in `streamlit_app.py`** (it must be the first Streamlit
-  call) and below `warnings.filterwarnings` in `verify_transcription.py`. E402 is not in ruff's default
-  rule set *and* `[tool.ruff.lint] extend-ignore` names it explicitly, so this passes lint — do not
-  reorder.
+- **Imports sit below `st.set_page_config` in `streamlit_app.py`** and below
+  `warnings.filterwarnings` in `verify_transcription.py`. The first is this file's own ordering,
+  not a runtime rule and not the templates': no release from 1.57 up enforces it — the 1.63
+  docstring says the command "can be called multiple times in a script run", `page_config.py` has
+  no first-command guard, and an AppTest that imported `utils` and drew a sidebar widget before it
+  ran clean — and every bundled template keeps its imports above the call. What their README
+  prescribes is only that it be the first *Streamlit* call, which it is here. It stays because the
+  file reads as a page that way; a comment asserting more would restate a myth. The second is the
+  same kind of convention: `filterwarnings("ignore")` is global and runs before `run()`, so where
+  the imports sit relative to it changes nothing — the three under it emit nothing at import
+  (measured under `-W error`), and the function-local `mlx_audio` imports run under the filter
+  either way. E402 is not in ruff's default rule set *and* `[tool.ruff.lint] extend-ignore` names
+  it explicitly, so both pass lint; the ignore stays so a release that promotes E402 cannot turn a
+  convention into a red `lint` job.
 - **`st.segmented_control` is passed `required=True`, and the mode branch below it depends on that.**
   A single-selection segmented control is deselectable by default: clicking the lit segment returns
   `None`, which matches neither label, falls through to the `else` and draws the file uploader under
-  a control with nothing selected. `tests/test_smoke.py` renders the page but never clicks a widget,
-  so nothing here catches its removal.
+  a control with nothing selected. `tests/test_smoke.py` asserts the flag through the proto, since
+  AppTest cannot deselect: `set_value(None)` or `unselect()` on a single-select control hands the
+  script the default with or without `required`, measured, so the field the frontend enforces is
+  the only check.
 - **`layout="wide"`, one `st.columns([4, 5], gap="medium")`, and a reading surface capped at
   `TRANSCRIPT_WIDTH`.** The centred default is a 736 px column on whatever the display is; on the
   1920×1080 panel this runs on it left ~440 px blank a side and stacked the input above the
@@ -473,11 +506,13 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   `TRANSCRIPT_WIDTH` — carry every measurement and the ratio and cap arguments; the numbers there
   were measured in the browser, not derived from the column widths (the panel that proposed the
   ratio had `[2, 3]` overflowing the chunk table; the grid needs 497 px and `[2, 3]` gives it
-  517), so re-measure rather than round. Two accepted costs are stated there too: `st.columns` has one breakpoint, so with the
-  sidebar open the right column clears the cap only from ~1835 px up and the measure follows the
-  window below that, down to ~45 characters at 1100; and `wrap=` is not passed on `st.columns` or
+  517), so re-measure rather than round. Two accepted costs are stated there too: `st.columns` has
+  one breakpoint, so with the sidebar open at its default width the right column clears the cap
+  only from ~1835 px up and the measure follows the window below that, down to ~45 characters at
+  1100; and `wrap=` is not passed on `st.columns` or
   `st.container`, absent from 1.61, the floor, and present from 1.62. `tests/test_smoke.py` sees
-  the tree and none of the geometry; AppTest has no frontend.
+  the tree's structure — a bordered, pixel-capped slot alone in the wider column — and none of the
+  geometry; AppTest has no frontend, and the measured values are re-measured, not pinned.
 - **`st.audio` is passed an explicit `format=`, derived from the extension by `preview_mime`.** It
   defaults to `"audio/wav"` and nothing sniffs the container, so the bytes are served under that
   Content-Type. Eight of the nine `UPLOAD_TYPES` are not WAV, and browsers that pick a decoder from
@@ -548,7 +583,15 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   built-in search and CSV download that lazy loading does not support, and only tables past that
   floor trade them away. Do not "simplify" it to `lazy=None`: `result.segments` is a `list[dict]`,
   which the automatic path treats as "everything else" and loads eagerly at any size — the
-  150,000-row rule it documents covers pandas, polars and Arrow inputs only.
+  150,000-row rule it documents covers pandas, polars and Arrow inputs only. The expander carries
+  `key="chunks"` and the dataframe carries no key, and both are deliberate: the expander's label
+  is the chunk count, and a 1.63 expander with no key gets no block id, so a re-press that lands a
+  different count reset it closed — with the key the id is built from the key and `type=`, never
+  the label, and the user's open/closed state survives the relabel at no rerun. On the dataframe
+  `key` is consulted only under `on_select`, so the `key="orders"` the bundled Streamlit skill doc
+  puts on a plain `st.dataframe` (`references/best-practices.md` in the skill Streamlit ships
+  inside its own wheel, under `.agents/`) ships no id, no `st-key-` class and no session-state
+  entry here; `key="segments"` was carried for a while and did nothing.
 - **`st.cache_resource(max_entries=1)`** keeps exactly one multi-gigabyte model resident, so pointing
   the app at another repo evicts rather than accumulates.
 - **`.streamlit/config.toml` carries a `[theme.dark]` block and no flat `[theme]` key, on purpose.**
@@ -593,14 +636,23 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   "the only network calls are Hugging Face weight downloads" true: the option defaults to *on*, and
   the frontend acts on it by fetching an endpoint from `data.streamlit.io` — a third-party webhook
   today — and POSTing events there. From the browser rather than from Python, which is why no
-  amount of reading this app's own source turns it up.
+  amount of reading this app's own source turns it up. And it sets `[server] address =
+  "localhost"`: unset, 1.63 binds the `::` dual-stack wildcard and prints a Network URL — measured,
+  the port answered at the LAN address with the macOS firewall off — which hands anyone on the
+  same network the upload endpoint and the Checkpoint field, and `load_asr` is process-global with
+  `max_entries=1`, so a visitor typing any repo there evicts the resident model and starts a Hub
+  download on this machine's credentials. `localhost` rather than `127.0.0.1` because the address
+  is also the origin the browser opens, and a new origin drops the theme and sidebar state
+  localStorage holds. `--server.address 0.0.0.0` on the command line opens it deliberately.
 - **`page_icon` is an emoji while every `icon=` argument is Material.** Not an inconsistency to
   tidy: the `icon=` glyphs are drawn from the font Streamlit bundles, but a Material *favicon* the
   frontend resolves to an SVG on `fonts.gstatic.com`, which the browser then fetches from Google —
   once per cold cache rather than per load, but the one request, made by the tab icon, that left
   the sentence above untrue. An emoji is rendered into an inline `data:` URL and fetches nothing.
-  `tests/test_smoke.py` renders the page but asserts nothing about page config, so nothing here
-  catches its reversal. The comment on `st.set_page_config` carries it.
+  AppTest discards the page-config message, so `tests/test_smoke.py` records the call by
+  monkeypatching `st.set_page_config` and asserts the icon passes Streamlit's own `is_emoji` gate —
+  a negative check on the `:material/` prefix let a URL through. The comment on
+  `st.set_page_config` carries it.
 
 ## Model limits — not missing features
 
