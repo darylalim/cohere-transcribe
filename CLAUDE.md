@@ -166,6 +166,7 @@ above. All of it is cheap, and all of it was invisible to every job that runs on
   a rename, a cleared uploader and a switch to Record and drops it only on new bytes, the three
   downloads carrying `on_click="ignore"` and going dark on a no-speech result, the six sidebar
   defaults a Transcribe press consumes (five reach `generate`, `repo_id` reaches `load_asr`), the
+  three bound ones read back from the URL and an unrecognised value stripped from it, the
   split's structure and none of its geometry, the transcript and the escaped filename reaching the
   screen as the same characters the downloads write, and `page_icon` passing `is_emoji`. Where
   AppTest cannot drive the rule — it cannot deselect a segmented control, and it discards the
@@ -487,6 +488,18 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   either way. E402 is not in ruff's default rule set *and* `[tool.ruff.lint] extend-ignore` names
   it explicitly, so both pass lint; the ignore stays so a release that promotes E402 cannot turn a
   convention into a red `lint` job.
+- **Language, punctuation and VAD are bound to query params; the Advanced controls are not.** A
+  reload starts a new session, and without `bind="query-params"` it also reset the three choices a
+  transcription depends on. The URL carries the selectbox's *formatted* label (`German (de)`), not
+  the code — a bound selectbox serialises what the frontend shows, so a raw `?language=de` is
+  dropped back to English and stripped, and renaming a label in `LANGUAGES` silently resets old
+  bookmarks; `tests/test_smoke.py` asserts both directions so the wart stays a documented one. At
+  the default the parameter is removed, so a fresh load is a bare URL, and the frontend writes it
+  with `replaceState` — no rerun, no request. Not on `repo_id`: a reload is that field's reset to
+  `DEFAULT_REPO`, which binding would carry a bad checkpoint through. `bind=` requires `key=`,
+  which is why those three widgets carry one and nothing else in the sidebar does; the parameter
+  is present on `st.selectbox` and `st.toggle` in clean 1.57, 1.60 and 1.61 installs, so it does
+  not move the floor.
 - **`st.segmented_control` is passed `required=True`, and the mode branch below it depends on that.**
   A single-selection segmented control is deselectable by default: clicking the lit segment returns
   `None`, which matches neither label, falls through to the `else` and draws the file uploader under
@@ -675,7 +688,8 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   asserts the two lists stay in step, in both directions.
 - The UI uses recent Streamlit APIs deliberately (`st.segmented_control`, `st.container(horizontal=…)`,
   `width="stretch"`, `icon=` on metrics and expanders, `on_click="ignore"` on download buttons,
-  `lazy=True` on the chunk table). Don't substitute older equivalents. The
+  `lazy=True` on the chunk table, `bind="query-params"` on the three primary sidebar controls).
+  Don't substitute older equivalents. The
   floor in `pyproject.toml` is a checked claim rather than an assumed one: every `st.*` call the app
   makes was resolved against clean 1.57 through 1.61 installs, and *two* of them move it — `icon=`
   on `st.metric` and `lazy=` on `st.dataframe`, both landing in **1.61** — while everything else

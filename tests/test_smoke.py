@@ -495,6 +495,34 @@ def test_sidebar_defaults() -> None:
     assert not app.sidebar.slider[0].disabled
 
 
+def test_sidebar_choices_survive_a_reload() -> None:
+    """`bind="query-params"` on language, punctuation and VAD.
+
+    A reload starts a new session, and without the binding it also reset the
+    three choices a transcription depends on. The URL carries the formatted
+    label, not the code: a raw `?language=de` is not a value the selectbox
+    recognises, so it falls back to English and the parameter is stripped --
+    asserted here so the wart is a documented one. Dropping `bind=` leaves
+    every other test green; measured.
+    """
+    app = _app()
+    app.query_params["language"] = "German (de)"
+    app.query_params["use_vad"] = "true"
+    app.run()
+
+    assert not app.exception, [str(e) for e in app.exception]
+    assert app.sidebar.selectbox[0].value == "de", "the URL's language was ignored"
+    assert [t.value for t in app.sidebar.toggle] == [True, True]
+    assert not app.sidebar.slider[0].disabled, "VAD from the URL left the gap dark"
+
+    app = _app()
+    app.query_params["language"] = "de"
+    app.run()
+    assert not app.exception, [str(e) for e in app.exception]
+    assert app.sidebar.selectbox[0].value == "en"
+    assert app.query_params == {}, "an unrecognised value should be stripped"
+
+
 def test_layout_keeps_its_structure() -> None:
     """The split's structure, and none of its geometry.
 

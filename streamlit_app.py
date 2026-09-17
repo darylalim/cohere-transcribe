@@ -55,23 +55,41 @@ result: Transcript | None = st.session_state.setdefault("result", None)
 
 with st.sidebar:
     st.subheader("Transcription")
+    # bind=, so a reload, a reopened tab or a restarted server keeps the three
+    # choices a transcription depends on, and a bookmark can carry them:
+    # without it a German or Japanese user came back to English and re-picked
+    # it before re-uploading. The URL carries the *formatted* label
+    # ("German (de)"), because a bound selectbox serialises what the frontend
+    # shows -- a raw ?language=de is dropped and falls back to English, and
+    # renaming a label in LANGUAGES silently resets old bookmarks. At the
+    # default the parameter is removed, so a fresh load stays a bare URL, and
+    # the frontend writes it with replaceState: no rerun, no request. Not on
+    # repo_id: a reload is that field's reset to DEFAULT_REPO, which binding
+    # would carry a bad checkpoint through. bind= requires key=, which is why
+    # these three carry one and the Advanced controls do not; present on both
+    # widgets from 1.57, so the floor is untouched.
     language = st.selectbox(
         "Language",
         LANGUAGES,
         format_func=lambda code: f"{LANGUAGES[code]} ({code})",
         key="language",
+        bind="query-params",
         help="Cohere Transcribe has no language detection and does not handle "
         "code-switching, so the language has to be set explicitly.",
     )
     punctuation = st.toggle(
         "Punctuation and casing",
         value=True,
+        key="punctuation",
+        bind="query-params",
         help="Switches the prompt's punctuation token. Turn it off for raw "
         "lowercase text without punctuation.",
     )
     use_vad = st.toggle(
         "Trim silence with VAD",
         value=False,
+        key="use_vad",
+        bind="query-params",
         help="Splits on detected speech instead of fixed 35-second windows. "
         "Worth it for meetings and podcasts, where it stops the model from "
         "hallucinating over silence. Skip it for clean narration, where it "
