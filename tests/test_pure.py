@@ -26,6 +26,8 @@ against nine actual containers, which no fixture set can match.
 
 from __future__ import annotations
 
+import string
+
 import numpy as np
 import pytest
 
@@ -34,6 +36,7 @@ from utils.audio import (
     UPLOAD_TYPES,
     _cues,
     _timestamp,
+    escape_markdown,
     format_duration,
     preview_mime,
     to_srt,
@@ -401,6 +404,36 @@ def test_timestamp(seconds, expected):
 )
 def test_format_duration(seconds, expected):
     assert format_duration(seconds) == expected
+
+
+# --- Caption escaping -----------------------------------------------------
+# The filename caption in streamlit_app.py is Markdown and the filename is the
+# user's. Dropping any character range but the first leaves every job green:
+# the smoke tests read the Markdown source back and pin two names whose
+# punctuation is all `*` and `.` -- both in `[!-/]` -- and nothing else
+# executes the regex. A mistyped backreference is not what this section is
+# for: it turns both of those names red on its own.
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("take*2*.wav", r"take\*2\*\.wav"),  # the failure that motivated it
+        ("[a](b).wav", r"\[a\]\(b\)\.wav"),  # would have rendered as a link
+        ("a_b [final].mp3", r"a\_b \[final\]\.mp3"),
+        ("a_b_c.wav", r"a\_b\_c\.wav"),  # intraword underscores, escaped anyway
+        ("plain.wav", r"plain\.wav"),
+        ("plain", "plain"),
+        ("a\\b.wav", r"a\\b\.wav"),  # the escape character is itself escaped
+        (string.punctuation, "".join("\\" + c for c in string.punctuation)),
+    ],
+)
+def test_escape_markdown_escapes_every_ascii_punctuation(name, expected):
+    assert escape_markdown(name) == expected
+
+
+def test_escape_markdown_leaves_letters_digits_and_spaces_alone():
+    assert escape_markdown("meeting 2 final") == "meeting 2 final"
 
 
 # --- Transcript -----------------------------------------------------------
