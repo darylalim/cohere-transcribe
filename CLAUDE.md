@@ -354,7 +354,7 @@ tests/test_pure.py         unit tests for the pure functions, and for the test o
 tests/test_smoke.py        sentencepiece is installed; streamlit_app.py renders and its rules hold
                            under AppTest; config.toml keeps its rules
 .streamlit/config.toml     the 1000 MB upload ceiling, loopback bind, usage stats off,
-                           [theme.dark], a one-key [theme.light]
+                           [theme.dark], a two-key [theme.light]
 ```
 
 Flow: `UploadedFile` (or `st.audio_input`) → `decode_to_mono16k` → flat `np.float32` array at 16 kHz +
@@ -614,11 +614,18 @@ Each of these looks like a mistake and is not. Comments in the source carry the 
   variant table carrying at least one key — either alone is enough, whatever the bundled Streamlit
   skill doc says about needing both — makes the frontend build the pair instead: the settings menu
   offers System/Light/Dark, "System" follows `prefers-color-scheme`, and the missing half is built
-  from the flat keys with `base` forced to it. The light half is `[theme.light]` with one key,
-  `primaryColor`: stock light's primary is the same `#ff4b4b`, short on more pairs than dark is,
-  and none of the failures the dark keys fix exist in stock light, so anything else there would
-  restate stock. A flat key is inherited by both halves, so the flat table is only for keys
-  registered nowhere else — `showSidebarBorder` and the font-size keys — and none is wanted today:
+  from the flat keys with `base` forced to it. The light half is `[theme.light]` with two keys.
+  `primaryColor`: stock light's primary is the same `#ff4b4b`, short on more pairs than dark is.
+  `showWidgetBorder`: the same field-edge failure dark's key fixes, fainter — a stock light field
+  is `#ffffff` on the `#f0f2f6` sidebar panel, 1.12:1 against dark's 1.20, and the key gives it
+  the 1 px `#d6d6d9` hairline the Advanced expander already draws, 1.29:1 on the panel and 1.45
+  on the field (measured in Chrome). Not `borderColor`, which would lift the transcript frame
+  too, and not the 3:1 sidebar rim dark gets from `[theme.dark.sidebar]` — that parallel edit
+  recolours the toggle track and the expander frame as well and is left as an open measurement.
+  Nothing else there: light's text and surfaces have none of the failures the other dark keys
+  fix, so any other key would restate stock. A flat key is inherited by both halves, so the flat
+  table is only for keys registered nowhere else — `showSidebarBorder` and the font-size keys —
+  and none is wanted today:
   the sidebar seam measures 1.20:1 against stock's 1.27 and was not judged a failure. Two more
   things stay out of it. No font key: the
   `font = "Inter:https://fonts.googleapis.com/…"` form every bundled theme template uses is

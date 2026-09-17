@@ -6,7 +6,7 @@
 # their OS setting. With the table below carrying a key the frontend builds the
 # pair instead: the settings menu offers System/Light/Dark, "System" follows
 # prefers-color-scheme, and the light half is built the same way from
-# [theme.light], which carries one key and is otherwise the stock light theme.
+# [theme.light], which carries two keys and is otherwise the stock light theme.
 # A flat key is inherited by both halves, so one that has a variant home and
 # sits flat restyles light when dark was meant; the flat table is for keys
 # registered nowhere else, and today none of those is wanted. The mode a
@@ -106,15 +106,31 @@ showWidgetBorder = true
 borderColor = "#757575"
 
 [theme.light]
-# The same coral, and the only key here. Stock light's primary is the same
-# #ff4b4b: 3.30:1 under the white label, and short on more pairs than dark is --
-# the slider track (2.95 on #f0f2f6) and the selected segment's label (2.92)
-# both miss. Coral-700 on white clears every one of them: 4.66 under the label,
-# 4.66 as a toggle track, 4.16 on the slider track, 4.08 as the segment label.
-# Nothing else is set, because none of the failures the dark keys fix exist in
-# stock light -- its text is #31333f at 12.5:1 on white, its surfaces carry no
-# tint -- so any other key here would restate stock.
+# The same coral. Stock light's primary is the same #ff4b4b: 3.30:1 under the
+# white label, and short on more pairs than dark is -- the slider track (2.95
+# on #f0f2f6) and the selected segment's label (2.92) both miss. Coral-700 on
+# white clears every one of them: 4.66 under the label, 4.66 as a toggle
+# track, 4.16 on the slider track, 4.08 as the segment label.
 primaryColor = "#ca492d"
+# The same edge failure the dark block's key fixes, fainter: with no border at
+# rest a field is its fill against the panel, and stock light's is #ffffff on
+# #f0f2f6 for every sidebar field, 1.12:1 against dark's 1.20 (measured in
+# Chrome, light mode, 1.63.0). On, every field draws 1 px of stock's derived
+# border -- textColor at 20 %, #d6d6d9 -- at 1.45:1 on the white field and
+# 1.29 against the panel, and swaps it for solid primary on focus; the
+# dropzone's rim on the page rises from 1.45 to 1.61. That is the hairline the
+# Advanced expander already draws around those fields, so nothing new enters
+# the sidebar's language. borderColor stays unset: setting it here would lift
+# the transcript frame and the metric cards along with the outlines, and
+# dark's argument for keeping that rim under 3:1 holds on white too. Not the
+# 3:1 sidebar rim dark gets from [theme.dark.sidebar]: 1.29 is short of WCAG
+# 1.4.11's control-boundary floor by the same reasoning that gave dark one, and
+# a [theme.light.sidebar] borderColor is the parallel edit if it is wanted --
+# not made here, because it would also recolour the toggle's off track and
+# the expander frame, and each of those wants its own measurement. Nothing
+# else is set: light's text is #31333f at 12.5:1 on white and its surfaces
+# carry no tint, so any other key here would restate stock.
+showWidgetBorder = true
 
 [server]
 # An hour of 48 kHz stereo WAV runs well past Streamlit's 200 MB default.
